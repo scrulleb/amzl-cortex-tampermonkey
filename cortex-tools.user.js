@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Cortex Tools
 // @namespace    https://github.com/jurib/amzl-cortex-tampermonkey
-// @version      1.0.0
+// @version      1.1.0
 // @description  Produktivitäts-Tools für logistics.amazon.de (Cortex)
 // @author       Juri B.
 // @match        https://logistics.amazon.de/*
@@ -25,9 +25,12 @@
     enabled: true,
     dev: false,
     serviceAreaId: 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx',
+    deliveryPerfStation: 'XYZ1',
+    deliveryPerfDsp: 'TEST',
     features: {
       whcDashboard: true,
       dateExtractor: true,
+      deliveryPerf: true,
     },
   };
 
@@ -40,6 +43,8 @@
         ...DEFAULTS,
         ...saved,
         features: { ...DEFAULTS.features, ...(saved.features || {}) },
+        deliveryPerfStation: saved.deliveryPerfStation || DEFAULTS.deliveryPerfStation,
+        deliveryPerfDsp: saved.deliveryPerfDsp || DEFAULTS.deliveryPerfDsp,
       };
     } catch {
       return JSON.parse(JSON.stringify(DEFAULTS));
@@ -336,6 +341,113 @@
     @media (max-width: 768px) {
       .ct-panel, .ct-dialog { min-width: unset; width: 95vw; }
     }
+
+    /* ── Delivery Performance Dashboard ───────────────────── */
+    .ct-dp-panel {
+      background: var(--ct-bg); border-radius: var(--ct-radius-lg);
+      padding: 24px; max-width: 1200px; width: 95vw; max-height: 92vh;
+      overflow-y: auto; box-shadow: var(--ct-shadow-heavy);
+      font-family: var(--ct-font);
+    }
+    .ct-dp-panel h2 { margin: 0 0 16px; color: var(--ct-primary); }
+
+    .ct-dp-badges {
+      display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px;
+    }
+    .ct-dp-badge {
+      background: var(--ct-primary); color: var(--ct-accent);
+      border-radius: 12px; padding: 3px 10px; font-size: 11px;
+      font-weight: bold; white-space: nowrap;
+    }
+    .ct-dp-badge span { color: var(--ct-text-light); font-weight: normal; margin-left: 4px; }
+
+    .ct-dp-record {
+      border: 1px solid var(--ct-border); border-radius: var(--ct-radius);
+      margin-bottom: 20px; overflow: hidden;
+    }
+    .ct-dp-record-header {
+      background: var(--ct-primary); color: var(--ct-text-light);
+      padding: 8px 14px; font-weight: bold; font-size: 13px;
+      display: flex; align-items: center; gap: 10px;
+    }
+    .ct-dp-record-body {
+      padding: 14px; display: grid;
+      grid-template-columns: 1fr 1fr; gap: 14px;
+    }
+    @media (max-width: 900px) {
+      .ct-dp-record-body { grid-template-columns: 1fr; }
+    }
+
+    .ct-dp-section-title {
+      font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
+      color: var(--ct-muted); margin: 0 0 8px; font-weight: bold;
+    }
+
+    .ct-dp-count-table {
+      width: 100%; border-collapse: collapse; font-size: 12px;
+    }
+    .ct-dp-count-table td {
+      padding: 3px 6px; border-bottom: 1px solid #f0f0f0; vertical-align: middle;
+    }
+    .ct-dp-count-table td:first-child { color: #555; font-size: 11px; width: 65%; }
+    .ct-dp-count-table td:last-child { text-align: right; font-weight: bold; }
+
+    .ct-dp-rates { display: flex; flex-direction: column; gap: 6px; }
+    .ct-dp-rate-row { display: flex; align-items: center; gap: 8px; }
+    .ct-dp-rate-label { font-size: 11px; color: #555; flex: 1 1 60%; }
+    .ct-dp-rate-value {
+      font-weight: bold; font-size: 12px; text-align: right;
+      white-space: nowrap; min-width: 60px;
+    }
+    .ct-dp-rate-bar-wrap {
+      flex: 0 0 60px; height: 6px; background: #eee;
+      border-radius: 3px; overflow: hidden;
+    }
+    .ct-dp-rate-bar { height: 100%; border-radius: 3px; }
+
+    .ct-dp-rate--great { color: var(--ct-success); }
+    .ct-dp-rate--bar--great { background: var(--ct-success); }
+    .ct-dp-rate--ok { color: var(--ct-warning); }
+    .ct-dp-rate--bar--ok { background: var(--ct-warning); }
+    .ct-dp-rate--bad { color: var(--ct-danger); }
+    .ct-dp-rate--bar--bad { background: var(--ct-danger); }
+    .ct-dp-rate--neutral { color: var(--ct-info); }
+    .ct-dp-rate--bar--neutral { background: var(--ct-info); }
+
+    .ct-dp-ts-row {
+      display: flex; gap: 20px; flex-wrap: wrap; font-size: 12px;
+      padding: 8px 0; border-top: 1px solid #f0f0f0; margin-top: 4px;
+    }
+    .ct-dp-ts-item { display: flex; flex-direction: column; gap: 2px; }
+    .ct-dp-ts-label { font-size: 10px; color: var(--ct-muted); text-transform: uppercase; }
+    .ct-dp-ts-val { font-weight: bold; }
+
+    .ct-dp-tiles {
+      display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px;
+    }
+    .ct-dp-tile {
+      background: #f7f8fa; border: 1px solid #e0e0e0;
+      border-radius: var(--ct-radius); padding: 10px 16px;
+      text-align: center; min-width: 90px; flex: 1 1 90px;
+    }
+    .ct-dp-tile-val {
+      font-size: 20px; font-weight: bold; color: var(--ct-primary); line-height: 1.2;
+    }
+    .ct-dp-tile-lbl { font-size: 10px; color: var(--ct-muted); margin-top: 2px; }
+    .ct-dp-tile--success .ct-dp-tile-val { color: var(--ct-success); }
+    .ct-dp-tile--warn .ct-dp-tile-val { color: var(--ct-warning); }
+    .ct-dp-tile--danger .ct-dp-tile-val { color: var(--ct-danger); }
+
+    .ct-dp-loading {
+      text-align: center; padding: 40px; color: var(--ct-muted); font-style: italic;
+    }
+    .ct-dp-error {
+      background: #fff0f0; border: 1px solid #ffcccc;
+      border-radius: var(--ct-radius); padding: 14px;
+      color: var(--ct-danger); font-size: 13px;
+    }
+    .ct-dp-empty { text-align: center; padding: 30px; color: var(--ct-muted); }
+    .ct-dp-full-col { grid-column: 1 / -1; }
   `);
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -374,6 +486,9 @@
           <li class="fp-sub-menu-list-item">
             <a href="#" data-ct-tool="date-extractor">📅 Date Range Extractor</a>
           </li>
+          <li class="fp-sub-menu-list-item">
+            <a href="#" data-ct-tool="delivery-perf">📦 Daily Delivery Performance</a>
+          </li>
           <li class="ct-divider" role="separator"></li>
           <li class="fp-sub-menu-list-item">
             <a href="#" data-ct-tool="settings">⚙ Einstellungen</a>
@@ -393,6 +508,7 @@
           switch (tool) {
             case 'whc-dashboard': whcDashboard.toggle(); break;
             case 'date-extractor': dateRangeExtractor.showDialog(); break;
+            case 'delivery-perf': deliveryPerformance.toggle(); break;
             case 'settings': openSettings(); break;
           }
         } catch (ex) {
@@ -1396,6 +1512,581 @@
   };
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // MODULE: DAILY DELIVERY PERFORMANCE
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Pure helper functions – also exported via deliveryPerformance._helpers
+   * so that the test suite can import them without a DOM/GM environment.
+   */
+
+  // Field-type classification maps
+  const DP_STRING_FIELDS = new Set([
+    'country', 'station_code', 'program',
+    'country_dspid_stationcode', 'country_program_stationcode',
+    'region', 'dsp_code', 'country_program_dspid_stationcode',
+    'country_stationcode', 'country_program_data_date',
+  ]);
+
+  const DP_INT_FIELDS = new Set([
+    'delivered', 'unbucketed_delivery_misses', 'address_not_found',
+    'return_to_station_utl', 'return_to_station_uta', 'customer_not_available',
+    'return_to_station_all', 'successful_c_return_pickups', 'rts_other',
+    'dispatched', 'transferred_out', 'dnr', 'return_to_station_nsl',
+    'completed_routes', 'first_delv_with_test_dim', 'pde_photos_taken',
+    'packages_not_on_van', 'first_disp_with_test_dim', 'delivery_attempt',
+    'return_to_station_bc', 'pod_bypass', 'pod_opportunity', 'pod_success',
+    'next_day_routes', 'scheduled_mfn_pickups', 'successful_mfn_pickups',
+    'rejected_packages', 'payment_not_ready', 'scheduled_c_return_pickups',
+    'return_to_station_cu', 'return_to_station_oodt', 'rts_dpmo', 'dnr_dpmo',
+    'ttl',
+  ]);
+
+  // Rates that are 0–1 ratios displayed as percentage
+  const DP_PERCENT_FIELDS = new Set([
+    'pod_success_rate', 'rts_cu_percent', 'rts_other_percent', 'rts_oodt_percent',
+    'rts_utl_percent', 'rts_bc_percent', 'delivery_attempt_percent',
+    'customer_not_available_percent', 'first_day_delivery_success_percent',
+    'rts_all_percent', 'rejected_packages_percent', 'payment_not_ready_percent',
+    'delivery_success_dsp', 'delivery_success',
+    'unbucketed_delivery_misses_percent', 'address_not_found_percent',
+  ]);
+
+  // Rates displayed as plain decimal (not %)
+  const DP_RATE_FIELDS = new Set(['shipment_zone_per_hour']);
+
+  const DP_DATETIME_FIELDS = new Set(['last_updated_time']);
+  const DP_EPOCH_FIELDS   = new Set(['messageTimestamp']);
+  const DP_DATE_FIELDS    = new Set(['data_date']);
+
+  // friendly labels for display
+  const DP_LABELS = {
+    country: 'Country', station_code: 'Station', program: 'Program',
+    country_dspid_stationcode: 'Country/DSP/Station',
+    country_program_stationcode: 'Country/Program/Station',
+    region: 'Region', dsp_code: 'DSP',
+    country_program_dspid_stationcode: 'Country/Program/DSP/Station',
+    country_stationcode: 'Country/Station',
+    country_program_data_date: 'Country/Program/Date',
+    delivered: 'Delivered', dispatched: 'Dispatched',
+    completed_routes: 'Completed Routes', delivery_attempt: 'Delivery Attempts',
+    unbucketed_delivery_misses: 'Unbucketed Misses',
+    address_not_found: 'Address Not Found',
+    return_to_station_utl: 'RTS UTL', return_to_station_uta: 'RTS UTA',
+    customer_not_available: 'Customer N/A',
+    return_to_station_all: 'RTS All', return_to_station_cu: 'RTS CU',
+    return_to_station_bc: 'RTS BC', return_to_station_nsl: 'RTS NSL',
+    return_to_station_oodt: 'RTS OODT',
+    successful_c_return_pickups: 'C-Return Pickups',
+    rts_other: 'RTS Other', transferred_out: 'Transferred Out', dnr: 'DNR',
+    first_delv_with_test_dim: 'First Delv (dim)', pde_photos_taken: 'PDE Photos',
+    packages_not_on_van: 'Pkgs Not on Van',
+    first_disp_with_test_dim: 'First Disp (dim)',
+    pod_bypass: 'POD Bypass', pod_opportunity: 'POD Opportunity',
+    pod_success: 'POD Success', next_day_routes: 'Next Day Routes',
+    scheduled_mfn_pickups: 'Sched MFN Pickups',
+    successful_mfn_pickups: 'Successful MFN Pickups',
+    rejected_packages: 'Rejected Pkgs', payment_not_ready: 'Payment N/Ready',
+    scheduled_c_return_pickups: 'Sched C-Return',
+    rts_dpmo: 'RTS DPMO', dnr_dpmo: 'DNR DPMO', ttl: 'TTL',
+    shipment_zone_per_hour: 'Shipments/Zone/Hour',
+    pod_success_rate: 'POD Success Rate',
+    rts_cu_percent: 'RTS CU %', rts_other_percent: 'RTS Other %',
+    rts_oodt_percent: 'RTS OODT %', rts_utl_percent: 'RTS UTL %',
+    rts_bc_percent: 'RTS BC %', delivery_attempt_percent: 'Delivery Attempt %',
+    customer_not_available_percent: 'Customer N/A %',
+    first_day_delivery_success_percent: 'First-Day Success %',
+    rts_all_percent: 'RTS All %', rejected_packages_percent: 'Rejected Pkgs %',
+    payment_not_ready_percent: 'Payment N/Ready %',
+    delivery_success_dsp: 'Delivery Success (DSP)',
+    delivery_success: 'Delivery Success',
+    unbucketed_delivery_misses_percent: 'Unbucketed Misses %',
+    address_not_found_percent: 'Address Not Found %',
+    last_updated_time: 'Last Updated', messageTimestamp: 'Message Timestamp',
+    data_date: 'Data Date',
+  };
+
+  /**
+   * Parse a raw API row string into a normalised record object.
+   * Trims leading/trailing spaces from all keys.
+   * @param {string} jsonStr  – raw JSON string from the API rows array
+   * @returns {Object}
+   */
+  function dpParseRow(jsonStr) {
+    const raw = typeof jsonStr === 'string' ? JSON.parse(jsonStr) : jsonStr;
+    const out = {};
+    for (const [k, v] of Object.entries(raw)) {
+      out[k.trim()] = v;
+    }
+    return out;
+  }
+
+  /**
+   * Classify a field name into its data type category.
+   * @param {string} field
+   * @returns {'string'|'int'|'percent'|'rate'|'datetime'|'epoch'|'date'|'unknown'}
+   */
+  function dpClassifyField(field) {
+    if (DP_STRING_FIELDS.has(field))   return 'string';
+    if (DP_INT_FIELDS.has(field))      return 'int';
+    if (DP_PERCENT_FIELDS.has(field))  return 'percent';
+    if (DP_RATE_FIELDS.has(field))     return 'rate';
+    if (DP_DATETIME_FIELDS.has(field)) return 'datetime';
+    if (DP_EPOCH_FIELDS.has(field))    return 'epoch';
+    if (DP_DATE_FIELDS.has(field))     return 'date';
+    return 'unknown';
+  }
+
+  /**
+   * Format a value for display based on its classified type.
+   * @param {string} field
+   * @param {*}      value
+   * @returns {string}
+   */
+  function dpFormatValue(field, value) {
+    if (value === null || value === undefined || value === '') return '—';
+    const type = dpClassifyField(field);
+    switch (type) {
+      case 'percent': {
+        const pct = (Number(value) * 100).toFixed(2);
+        return `${pct}%`;
+      }
+      case 'rate':
+        return Number(value).toFixed(2);
+      case 'datetime': {
+        try {
+          return new Date(value).toLocaleString(undefined, {
+            year: 'numeric', month: 'short', day: 'numeric',
+            hour: '2-digit', minute: '2-digit', second: '2-digit',
+          });
+        } catch { return String(value); }
+      }
+      case 'epoch': {
+        try {
+          return new Date(Number(value)).toLocaleString(undefined, {
+            year: 'numeric', month: 'short', day: 'numeric',
+            hour: '2-digit', minute: '2-digit', second: '2-digit',
+          });
+        } catch { return String(value); }
+      }
+      case 'date':
+        return String(value);
+      case 'int':
+        return Number(value).toLocaleString();
+      default:
+        return String(value);
+    }
+  }
+
+  /**
+   * Return the CSS colour class for a percentage/ratio value.
+   * Higher = better for delivery/success fields.
+   * Lower = better for RTS/miss fields.
+   */
+  function dpRateClass(field, value) {
+    const v = Number(value);
+    // RTS & miss fields: lower is better
+    if (field.startsWith('rts_') || field.includes('miss') ||
+        field === 'customer_not_available_percent' ||
+        field === 'rejected_packages_percent' ||
+        field === 'payment_not_ready_percent' ||
+        field === 'address_not_found_percent') {
+      if (v < 0.005) return 'great';
+      if (v < 0.01)  return 'ok';
+      return 'bad';
+    }
+    // Success/delivery/pod fields: higher is better
+    if (v >= 0.99)  return 'great';
+    if (v >= 0.97)  return 'ok';
+    return 'bad';
+  }
+
+  /**
+   * Validate a date-range pair. Returns null if valid, error string otherwise.
+   */
+  function dpValidateDateRange(from, to) {
+    if (!from || !to) return 'Both From and To dates are required.';
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from)) return 'From date format must be YYYY-MM-DD.';
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(to))   return 'To date format must be YYYY-MM-DD.';
+    if (from > to) return 'From date must not be after To date.';
+    return null;
+  }
+
+  /**
+   * Extract and sort records from the raw API response JSON.
+   * Returns an empty array if the payload has no rows.
+   */
+  function dpParseApiResponse(json) {
+    try {
+      const rows = json?.tableData?.dsp_daily_supplemental_quality?.rows;
+      if (!Array.isArray(rows) || rows.length === 0) return [];
+      return rows
+        .map(dpParseRow)
+        .sort((a, b) => (a.data_date || '').localeCompare(b.data_date || ''));
+    } catch (e) {
+      err('dpParseApiResponse error:', e);
+      return [];
+    }
+  }
+
+  const deliveryPerformance = {
+    _overlayEl: null,
+    _active: false,
+    _cache: new Map(),
+    _debounceTimer: null,
+
+    // Expose pure helpers for testing
+    _helpers: {
+      dpParseRow,
+      dpClassifyField,
+      dpFormatValue,
+      dpRateClass,
+      dpValidateDateRange,
+      dpParseApiResponse,
+    },
+
+    // ── Lifecycle ────────────────────────────────────────────
+    init() {
+      if (this._overlayEl) return;
+
+      const today    = todayStr();
+      const weekAgo  = (() => {
+        const d = new Date(today);
+        d.setDate(d.getDate() - 6);
+        return d.toISOString().split('T')[0];
+      })();
+      const station  = esc(config.deliveryPerfStation || 'XYZ1');
+      const dsp      = esc(config.deliveryPerfDsp      || 'TEST');
+
+      const overlay = document.createElement('div');
+      overlay.id = 'ct-dp-overlay';
+      overlay.className = 'ct-overlay';
+      overlay.setAttribute('role', 'dialog');
+      overlay.setAttribute('aria-modal', 'true');
+      overlay.setAttribute('aria-label', 'Daily Delivery Performance Dashboard');
+      overlay.innerHTML = `
+        <div class="ct-dp-panel">
+          <h2>📦 Daily Delivery Performance</h2>
+          <div class="ct-controls">
+            <label for="ct-dp-from">From:</label>
+            <input type="date" id="ct-dp-from" class="ct-input" value="${weekAgo}"
+                   aria-label="From date">
+            <label for="ct-dp-to">To:</label>
+            <input type="date" id="ct-dp-to" class="ct-input" value="${today}"
+                   aria-label="To date">
+            <label for="ct-dp-station">Station:</label>
+            <input type="text" id="ct-dp-station" class="ct-input"
+                   value="${station}" maxlength="8" style="width:80px"
+                   aria-label="Station code">
+            <label for="ct-dp-dsp">DSP:</label>
+            <input type="text" id="ct-dp-dsp" class="ct-input"
+                   value="${dsp}" maxlength="8" style="width:70px"
+                   aria-label="DSP code">
+            <button class="ct-btn ct-btn--accent" id="ct-dp-go">🔍 Fetch</button>
+            <button class="ct-btn ct-btn--close" id="ct-dp-close" aria-label="Close">✕ Close</button>
+          </div>
+          <div id="ct-dp-status" class="ct-status" role="status" aria-live="polite"></div>
+          <div id="ct-dp-body"></div>
+        </div>
+      `;
+
+      document.body.appendChild(overlay);
+      this._overlayEl = overlay;
+
+      overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) this.hide();
+      });
+      document.getElementById('ct-dp-close').addEventListener('click', () => this.hide());
+      document.getElementById('ct-dp-go').addEventListener('click', () => this._triggerFetch());
+
+      // Debounced date-change auto-fetch
+      const debounce = (fn, ms) => {
+        return (...args) => {
+          clearTimeout(this._debounceTimer);
+          this._debounceTimer = setTimeout(() => fn.apply(this, args), ms);
+        };
+      };
+      const debouncedFetch = debounce(this._triggerFetch, 600);
+      document.getElementById('ct-dp-from').addEventListener('change', debouncedFetch.bind(this));
+      document.getElementById('ct-dp-to').addEventListener('change', debouncedFetch.bind(this));
+
+      onDispose(() => this.dispose());
+      log('Delivery Performance Dashboard initialized');
+    },
+
+    dispose() {
+      clearTimeout(this._debounceTimer);
+      if (this._overlayEl) { this._overlayEl.remove(); this._overlayEl = null; }
+      this._active = false;
+      this._cache.clear();
+    },
+
+    toggle() {
+      if (!config.features.deliveryPerf) {
+        alert('Daily Delivery Performance ist deaktiviert. Bitte in den Einstellungen aktivieren.');
+        return;
+      }
+      this.init();
+      if (this._active) this.hide(); else this.show();
+    },
+
+    show() {
+      this.init();
+      this._overlayEl.classList.add('visible');
+      this._active = true;
+      document.getElementById('ct-dp-from').focus();
+    },
+
+    hide() {
+      if (this._overlayEl) this._overlayEl.classList.remove('visible');
+      this._active = false;
+    },
+
+    // ── API ──────────────────────────────────────────────────
+    _buildUrl(from, to, station, dsp) {
+      return (
+        'https://logistics.amazon.de/performance/api/v1/getData' +
+        `?dataSetId=dsp_daily_supplemental_quality` +
+        `&dsp=${encodeURIComponent(dsp)}` +
+        `&from=${encodeURIComponent(from)}` +
+        `&station=${encodeURIComponent(station)}` +
+        `&timeFrame=Daily` +
+        `&to=${encodeURIComponent(to)}`
+      );
+    },
+
+    async _fetchData(from, to, station, dsp) {
+      const cacheKey = `${from}|${to}|${station}|${dsp}`;
+      if (this._cache.has(cacheKey)) {
+        log('DP cache hit:', cacheKey);
+        return this._cache.get(cacheKey);
+      }
+
+      const url = this._buildUrl(from, to, station, dsp);
+      const csrf = getCSRFToken();
+      const headers = { Accept: 'application/json' };
+      if (csrf) headers['anti-csrftoken-a2z'] = csrf;
+
+      const resp = await withRetry(async () => {
+        const r = await fetch(url, { method: 'GET', headers, credentials: 'include' });
+        if (!r.ok) throw new Error(`HTTP ${r.status}: ${r.statusText}`);
+        return r;
+      }, { retries: 2, baseMs: 800 });
+
+      const json = await resp.json();
+      this._cache.set(cacheKey, json);
+      // Evict oldest entry if cache grows large
+      if (this._cache.size > 50) {
+        const oldest = this._cache.keys().next().value;
+        this._cache.delete(oldest);
+      }
+      return json;
+    },
+
+    // ── Trigger ──────────────────────────────────────────────
+    async _triggerFetch() {
+      const from    = document.getElementById('ct-dp-from').value;
+      const to      = document.getElementById('ct-dp-to').value;
+      const station = document.getElementById('ct-dp-station').value.trim().toUpperCase();
+      const dsp     = document.getElementById('ct-dp-dsp').value.trim().toUpperCase();
+
+      const validErr = dpValidateDateRange(from, to);
+      if (validErr) {
+        this._setStatus('⚠️ ' + validErr, 'warn');
+        return;
+      }
+      if (!station) { this._setStatus('⚠️ Station code required.', 'warn'); return; }
+      if (!dsp)     { this._setStatus('⚠️ DSP code required.', 'warn'); return; }
+
+      this._setStatus('⏳ Loading…');
+      this._setBody('<div class="ct-dp-loading" role="status">Fetching data…</div>');
+
+      try {
+        const json = await this._fetchData(from, to, station, dsp);
+        const records = dpParseApiResponse(json);
+        if (records.length === 0) {
+          this._setBody('<div class="ct-dp-empty">No data returned for the selected range.</div>');
+          this._setStatus('⚠️ No records found.');
+          return;
+        }
+        this._setBody(this._renderAll(records));
+        this._setStatus(`✅ ${records.length} record(s) loaded — ${from} to ${to}`);
+      } catch (e) {
+        err('Delivery perf fetch failed:', e);
+        this._setBody(`<div class="ct-dp-error">❌ ${esc(e.message)}</div>`);
+        this._setStatus('❌ Failed to load data.');
+      }
+    },
+
+    // ── Status / body helpers ────────────────────────────────
+    _setStatus(msg) {
+      const el = document.getElementById('ct-dp-status');
+      if (el) el.textContent = msg;
+    },
+
+    _setBody(html) {
+      const el = document.getElementById('ct-dp-body');
+      if (el) el.innerHTML = html;
+    },
+
+    // ── Rendering ────────────────────────────────────────────
+    _renderAll(records) {
+      // Render shared string-field badges from the first record
+      const badgesHtml = this._renderBadges(records[0]);
+      const recordsHtml = records.map((r) => this._renderRecord(r)).join('');
+      return badgesHtml + recordsHtml;
+    },
+
+    _renderBadges(record) {
+      const badges = [];
+      for (const field of DP_STRING_FIELDS) {
+        const val = record[field];
+        if (val === undefined || val === null || val === '') continue;
+        const label = DP_LABELS[field] || field;
+        badges.push(
+          `<span class="ct-dp-badge" title="${esc(field)}">${esc(label)}<span>${esc(String(val))}</span></span>`
+        );
+      }
+      if (!badges.length) return '';
+      return `<div class="ct-dp-badges" aria-label="Identifiers">${badges.join('')}</div>`;
+    },
+
+    _renderRecord(record) {
+      const dateLabel = esc(record.data_date || 'Unknown date');
+      return `
+        <div class="ct-dp-record">
+          <div class="ct-dp-record-header">📅 ${dateLabel}</div>
+          <div class="ct-dp-record-body">
+            ${this._renderKeyTiles(record)}
+            ${this._renderCounts(record)}
+            ${this._renderRates(record)}
+            ${this._renderTimestamps(record)}
+          </div>
+        </div>
+      `;
+    },
+
+    _renderKeyTiles(record) {
+      const KEY_TILES = [
+        { field: 'delivered',        label: 'Delivered' },
+        { field: 'dispatched',       label: 'Dispatched' },
+        { field: 'completed_routes', label: 'Routes' },
+        { field: 'delivery_success', label: 'Delivery Success', pct: true },
+        { field: 'pod_success_rate', label: 'POD Rate', pct: true },
+      ];
+      const tiles = KEY_TILES.map(({ field, label, pct }) => {
+        const val = record[field];
+        if (val === undefined || val === null) return '';
+        let displayVal, cls = '';
+        if (pct) {
+          const n = Number(val);
+          displayVal = `${(n * 100).toFixed(1)}%`;
+          const rc = dpRateClass(field, n);
+          cls = rc === 'great' ? 'ct-dp-tile--success' : rc === 'ok' ? 'ct-dp-tile--warn' : 'ct-dp-tile--danger';
+        } else {
+          displayVal = Number(val).toLocaleString();
+        }
+        return `<div class="ct-dp-tile ${cls}"><div class="ct-dp-tile-val">${esc(displayVal)}</div><div class="ct-dp-tile-lbl">${esc(label)}</div></div>`;
+      }).join('');
+      return `<div class="ct-dp-full-col"><div class="ct-dp-tiles">${tiles}</div></div>`;
+    },
+
+    _renderCounts(record) {
+      const rows = [];
+      for (const field of DP_INT_FIELDS) {
+        const val = record[field];
+        if (val === undefined || val === null) continue;
+        const label = DP_LABELS[field] || field;
+        rows.push(`<tr>
+          <td>${esc(label)}</td>
+          <td>${esc(Number(val).toLocaleString())}</td>
+        </tr>`);
+      }
+      if (!rows.length) return '';
+      return `<div>
+        <p class="ct-dp-section-title">Counts</p>
+        <table class="ct-dp-count-table" aria-label="Count metrics">
+          <tbody>${rows.join('')}</tbody>
+        </table>
+      </div>`;
+    },
+
+    _renderRates(record) {
+      const sections = [];
+
+      // Percentages
+      const pctRows = [];
+      for (const field of DP_PERCENT_FIELDS) {
+        const val = record[field];
+        if (val === undefined || val === null) continue;
+        const n = Number(val);
+        const rc = dpRateClass(field, n);
+        const barWidth = Math.min(100, Math.round(n * 100));
+        const label = DP_LABELS[field] || field;
+        pctRows.push(`
+          <div class="ct-dp-rate-row" role="listitem">
+            <span class="ct-dp-rate-label">${esc(label)}</span>
+            <div class="ct-dp-rate-bar-wrap" aria-hidden="true">
+              <div class="ct-dp-rate-bar ct-dp-rate--bar--${rc}" style="width:${barWidth}%"></div>
+            </div>
+            <span class="ct-dp-rate-value ct-dp-rate--${rc}">${(n * 100).toFixed(2)}%</span>
+          </div>`);
+      }
+
+      // Plain rates
+      for (const field of DP_RATE_FIELDS) {
+        const val = record[field];
+        if (val === undefined || val === null) continue;
+        const label = DP_LABELS[field] || field;
+        pctRows.push(`
+          <div class="ct-dp-rate-row" role="listitem">
+            <span class="ct-dp-rate-label">${esc(label)}</span>
+            <span class="ct-dp-rate-value ct-dp-rate--neutral">${Number(val).toFixed(2)}</span>
+          </div>`);
+      }
+
+      if (!pctRows.length) return '';
+      return `<div>
+        <p class="ct-dp-section-title">Rates &amp; Percentages</p>
+        <div class="ct-dp-rates" role="list">${pctRows.join('')}</div>
+      </div>`;
+    },
+
+    _renderTimestamps(record) {
+      const items = [];
+
+      // data_date
+      if (record.data_date) {
+        items.push(`<div class="ct-dp-ts-item">
+          <span class="ct-dp-ts-label">Data Date</span>
+          <span class="ct-dp-ts-val">${esc(String(record.data_date))}</span>
+        </div>`);
+      }
+
+      // last_updated_time
+      if (record.last_updated_time) {
+        items.push(`<div class="ct-dp-ts-item">
+          <span class="ct-dp-ts-label">Last Updated</span>
+          <span class="ct-dp-ts-val">${esc(dpFormatValue('last_updated_time', record.last_updated_time))}</span>
+        </div>`);
+      }
+
+      // messageTimestamp
+      if (record.messageTimestamp !== undefined && record.messageTimestamp !== null) {
+        items.push(`<div class="ct-dp-ts-item">
+          <span class="ct-dp-ts-label">Message Timestamp</span>
+          <span class="ct-dp-ts-val">${esc(dpFormatValue('messageTimestamp', record.messageTimestamp))}</span>
+        </div>`);
+      }
+
+      if (!items.length) return '';
+      return `<div class="ct-dp-full-col">
+        <div class="ct-dp-ts-row" aria-label="Timestamps">${items.join('')}</div>
+      </div>`;
+    },
+  };
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // SETTINGS DIALOG
   // ═══════════════════════════════════════════════════════════════════════════
 
@@ -1429,11 +2120,25 @@
 
         ${toggleHTML('ct-set-whc', 'WHC Dashboard', config.features.whcDashboard)}
         ${toggleHTML('ct-set-dre', 'Date Range Extractor', config.features.dateExtractor)}
+        ${toggleHTML('ct-set-dp',  'Daily Delivery Performance', config.features.deliveryPerf)}
         ${toggleHTML('ct-set-dev', 'Dev-Mode (ausführliches Logging)', config.dev)}
 
+        <div class="ct-settings-row" style="flex-direction: column; align-items: stretch; gap: 6px;">
+          <label style="margin-bottom: 2px;"><strong>Delivery Perf — Default Station:</strong></label>
+          <input type="text" class="ct-input ct-input--full" id="ct-set-dp-station"
+                 value="${esc(config.deliveryPerfStation || 'XYZ1')}" maxlength="8">
+        </div>
+        <div class="ct-settings-row" style="flex-direction: column; align-items: stretch; gap: 6px;">
+          <label style="margin-bottom: 2px;"><strong>Delivery Perf — Default DSP:</strong></label>
+          <input type="text" class="ct-input ct-input--full" id="ct-set-dp-dsp"
+                 value="${esc(config.deliveryPerfDsp || 'TEST')}" maxlength="8">
+        </div>
+
         <div class="ct-settings-row" style="flex-direction: column; align-items: stretch;">
-          <label for="ct-set-sa" style="margin-bottom: 6px;"><strong>Service Area ID:</strong></label>
-          <input type="text" id="ct-set-sa" class="ct-input ct-input--full" value="${esc(config.serviceAreaId)}">
+          <label for="ct-set-sa" style="margin-bottom: 6px;"><strong>Service Area:</strong></label>
+          <select id="ct-set-sa" class="ct-input ct-input--full">
+            <option value="">Wird geladen…</option>
+          </select>
         </div>
 
         <div style="margin-top: 20px; display: flex; gap: 10px; justify-content: flex-end;">
@@ -1454,12 +2159,42 @@
     document.getElementById('ct-set-save').addEventListener('click', () => {
       config.features.whcDashboard = document.getElementById('ct-set-whc').checked;
       config.features.dateExtractor = document.getElementById('ct-set-dre').checked;
+      config.features.deliveryPerf = document.getElementById('ct-set-dp').checked;
       config.dev = document.getElementById('ct-set-dev').checked;
-      config.serviceAreaId = document.getElementById('ct-set-sa').value.trim() || DEFAULTS.serviceAreaId;
+      config.deliveryPerfStation = document.getElementById('ct-set-dp-station').value.trim().toUpperCase() || 'XYZ1';
+      config.deliveryPerfDsp     = document.getElementById('ct-set-dp-dsp').value.trim().toUpperCase() || 'TEST';
+      const saSelect = document.getElementById('ct-set-sa');
+      config.serviceAreaId = saSelect.value.trim() || DEFAULTS.serviceAreaId;
       setConfig(config);
       overlay.remove();
       log('Settings saved:', config);
     });
+
+    // Fetch service areas and populate dropdown
+    (async () => {
+      const saSelect = document.getElementById('ct-set-sa');
+      try {
+        const resp = await fetch('https://logistics.amazon.de/account-management/data/get-company-service-areas');
+        const json = await resp.json();
+        if (json.success && Array.isArray(json.data) && json.data.length > 0) {
+          saSelect.innerHTML = '';
+          json.data.forEach((area) => {
+            const opt = document.createElement('option');
+            opt.value = area.serviceAreaId;
+            opt.textContent = area.stationCode;
+            if (area.serviceAreaId === config.serviceAreaId) opt.selected = true;
+            saSelect.appendChild(opt);
+          });
+          // If none matched, pre-select first
+          if (!saSelect.value) saSelect.options[0].selected = true;
+        } else {
+          saSelect.innerHTML = `<option value="${esc(config.serviceAreaId)}">${esc(config.serviceAreaId)}</option>`;
+        }
+      } catch (e) {
+        err('Failed to load service areas:', e);
+        saSelect.innerHTML = `<option value="${esc(config.serviceAreaId)}">${esc(config.serviceAreaId)}</option>`;
+      }
+    })();
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -1521,6 +2256,7 @@
 
   GM_registerMenuCommand('📊 WHC Dashboard', () => whcDashboard.toggle());
   GM_registerMenuCommand('📅 Date Range Extractor', () => dateRangeExtractor.showDialog());
+  GM_registerMenuCommand('📦 Daily Delivery Performance', () => deliveryPerformance.toggle());
   GM_registerMenuCommand('⚙ Einstellungen', openSettings);
   GM_registerMenuCommand('⏸ Skript pausieren', () => {
     config.enabled = false;
