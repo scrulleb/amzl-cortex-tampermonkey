@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Cortex Tools
 // @namespace    https://github.com/jurib/amzl-cortex-tampermonkey
-// @version      1.1.0
+// @version      1.2.0
 // @description  Produktivitäts-Tools für logistics.amazon.de (Cortex)
 // @author       Juri B.
 // @match        https://logistics.amazon.de/*
@@ -31,6 +31,7 @@
       whcDashboard: true,
       dateExtractor: true,
       deliveryPerf: true,
+      dvicCheck: true,
     },
   };
 
@@ -450,6 +451,88 @@
     .ct-dp-full-col { grid-column: 1 / -1; }
   `);
 
+  GM_addStyle(`
+    /* ── DVIC Check ───────────────────────────────────────── */
+    .ct-dvic-panel {
+      background: var(--ct-bg); border-radius: var(--ct-radius-lg);
+      padding: 24px; max-width: 1100px; width: 95vw; max-height: 92vh;
+      overflow-y: auto; box-shadow: var(--ct-shadow-heavy);
+      font-family: var(--ct-font);
+    }
+    .ct-dvic-panel h2 { margin: 0; color: var(--ct-primary); }
+
+    .ct-dvic-tabs {
+      display: flex; gap: 0; margin-bottom: 16px;
+      border-bottom: 2px solid var(--ct-border);
+    }
+    .ct-dvic-tab {
+      padding: 8px 18px; cursor: pointer; font-size: 13px; font-weight: bold;
+      border: none; background: none; color: var(--ct-muted);
+      font-family: var(--ct-font); border-bottom: 3px solid transparent;
+      margin-bottom: -2px; transition: color 0.15s;
+    }
+    .ct-dvic-tab:hover { color: var(--ct-primary); }
+    .ct-dvic-tab--active { color: var(--ct-primary); border-bottom-color: var(--ct-accent); }
+
+    .ct-dvic-tiles {
+      display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px;
+    }
+    .ct-dvic-tile {
+      background: #f7f8fa; border: 1px solid #e0e0e0;
+      border-radius: var(--ct-radius); padding: 10px 18px;
+      text-align: center; flex: 1 1 100px; min-width: 90px;
+    }
+    .ct-dvic-tile-val {
+      font-size: 22px; font-weight: bold; color: var(--ct-primary); line-height: 1.2;
+    }
+    .ct-dvic-tile-lbl { font-size: 10px; color: var(--ct-muted); margin-top: 2px; }
+    .ct-dvic-tile--ok   .ct-dvic-tile-val { color: var(--ct-success); }
+    .ct-dvic-tile--warn .ct-dvic-tile-val { color: var(--ct-warning); }
+    .ct-dvic-tile--danger .ct-dvic-tile-val { color: var(--ct-danger); }
+
+    .ct-dvic-badge--ok {
+      background: #d4edda; color: var(--ct-success);
+      border-radius: 10px; padding: 2px 8px; font-size: 11px; font-weight: bold;
+    }
+    .ct-dvic-badge--missing {
+      background: #ffe0e0; color: var(--ct-danger);
+      border-radius: 10px; padding: 2px 8px; font-size: 11px; font-weight: bold;
+    }
+
+    .ct-dvic-row--missing { background: #fff8f0 !important; }
+    .ct-dvic-row--missing:hover { background: #fff0d6 !important; }
+
+    .ct-dvic-expand-btn {
+      background: none; border: 1px solid var(--ct-border); border-radius: 3px;
+      cursor: pointer; font-size: 11px; padding: 1px 6px; color: var(--ct-info);
+      font-family: var(--ct-font);
+    }
+    .ct-dvic-expand-btn:hover { background: #e7f3ff; }
+
+    .ct-dvic-detail-row { display: none; }
+    .ct-dvic-detail-row.visible { display: table-row; }
+    .ct-dvic-detail-cell {
+      background: #f4f8ff !important; padding: 8px 16px !important;
+      font-size: 12px; text-align: left !important;
+    }
+
+    .ct-dvic-pagination {
+      display: flex; align-items: center; gap: 10px;
+      margin-top: 12px; justify-content: center; font-size: 13px;
+    }
+    .ct-dvic-page-info { color: var(--ct-muted); }
+
+    .ct-dvic-error {
+      background: #fff0f0; border: 1px solid #ffcccc;
+      border-radius: var(--ct-radius); padding: 14px;
+      color: var(--ct-danger); font-size: 13px; line-height: 1.6;
+    }
+    .ct-dvic-empty { text-align: center; padding: 30px; color: var(--ct-muted); }
+    .ct-dvic-loading {
+      text-align: center; padding: 40px; color: var(--ct-muted); font-style: italic;
+    }
+  `);
+
   // ═══════════════════════════════════════════════════════════════════════════
   // NAVBAR INJECTION SYSTEM
   // ═══════════════════════════════════════════════════════════════════════════
@@ -489,6 +572,9 @@
           <li class="fp-sub-menu-list-item">
             <a href="#" data-ct-tool="delivery-perf">📦 Daily Delivery Performance</a>
           </li>
+          <li class="fp-sub-menu-list-item">
+            <a href="#" data-ct-tool="dvic-check">🚛 DVIC Check</a>
+          </li>
           <li class="ct-divider" role="separator"></li>
           <li class="fp-sub-menu-list-item">
             <a href="#" data-ct-tool="settings">⚙ Einstellungen</a>
@@ -509,6 +595,7 @@
             case 'whc-dashboard': whcDashboard.toggle(); break;
             case 'date-extractor': dateRangeExtractor.showDialog(); break;
             case 'delivery-perf': deliveryPerformance.toggle(); break;
+            case 'dvic-check': dvicCheck.toggle(); break;
             case 'settings': openSettings(); break;
           }
         } catch (ex) {
@@ -2087,6 +2174,680 @@
   };
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // MODULE: DVIC CHECK
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Normalised per-vehicle model:
+   *   vehicleIdentifier : string
+   *   preTripTotal      : number   – totalInspectionsDone for PRE_TRIP_DVIC
+   *   postTripTotal     : number   – totalInspectionsDone for POST_TRIP_DVIC
+   *   missingCount      : number   – preTripTotal - postTripTotal (0 if OK)
+   *   status            : "OK" | "Post Trip DVIC Missing"
+   *   reporterIds       : string[] – unique reporter IDs across both trip types
+   *   reporterNames     : string[] – resolved employee names (fallback to ID)
+   *
+   * Employee name batch API contract (adapt endpoint as needed):
+   *   Request : GET /fleet-management/api/employees?employeeIds=A&employeeIds=B
+   *   Response: Array<{ employeeId: string, name: string }> or
+   *             { employees: Array<{ employeeId, name }> }
+   *   Fallback: display reporterId when endpoint fails or ID is unknown.
+   *
+   * Sample payloads (UI-ready):
+   *
+   *  OK vehicle:
+   *  { vehicleIdentifier:"VAN-001", preTripTotal:3, postTripTotal:3,
+   *    missingCount:0, status:"OK",
+   *    reporterIds:["E123","E456"], reporterNames:["Anna Müller","Ben Berg"] }
+   *
+   *  Missing vehicle:
+   *  { vehicleIdentifier:"VAN-042", preTripTotal:4, postTripTotal:2,
+   *    missingCount:2, status:"Post Trip DVIC Missing",
+   *    reporterIds:["E789"], reporterNames:["E789"] }   // ID used as fallback
+   *
+   *  Aggregated view example:
+   *  | VAN-042 | 2 | E789                |
+   *  | VAN-017 | 1 | Clara Kohl, Dirk Wu |
+   */
+
+  const dvicCheck = {
+    _overlayEl: null,
+    _active: false,
+    _vehicles: [],         // normalized vehicle records after enrichment
+    _nameCache: new Map(), // reporterId → displayName, persists across opens
+    _lastTimestamp: null,
+    _loading: false,
+
+    // Pagination state (separate per tab)
+    _pageSize: 25,
+    _pageCurrent: 1,
+    _pageMissing: 1,
+    _currentTab: 'all', // 'all' | 'missing'
+
+    // ── Lifecycle ─────────────────────────────────────────
+    init() {
+      if (this._overlayEl) return;
+
+      const overlay = document.createElement('div');
+      overlay.id = 'ct-dvic-overlay';
+      overlay.className = 'ct-overlay';
+      overlay.setAttribute('role', 'dialog');
+      overlay.setAttribute('aria-modal', 'true');
+      overlay.setAttribute('aria-label', 'DVIC Check');
+      overlay.innerHTML = `
+        <div class="ct-dvic-panel">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+            <div>
+              <h2>🚛 DVIC Check</h2>
+              <div id="ct-dvic-asof" style="font-size:11px;color:var(--ct-muted);margin-top:2px;"></div>
+            </div>
+            <button class="ct-btn ct-btn--close" id="ct-dvic-close" aria-label="Schließen">✕ Schließen</button>
+          </div>
+          <div id="ct-dvic-status" class="ct-status" role="status" aria-live="polite"></div>
+          <div id="ct-dvic-tiles"></div>
+          <div class="ct-dvic-tabs" role="tablist">
+            <button class="ct-dvic-tab ct-dvic-tab--active" data-tab="all" role="tab"
+                    aria-selected="true" id="ct-dvic-tab-all">Alle Fahrzeuge</button>
+            <button class="ct-dvic-tab" data-tab="missing" role="tab"
+                    aria-selected="false" id="ct-dvic-tab-missing">⚠️ DVIC Fehlend</button>
+          </div>
+          <div id="ct-dvic-body"></div>
+        </div>
+      `;
+
+      document.body.appendChild(overlay);
+      this._overlayEl = overlay;
+
+      overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) this.hide();
+      });
+      document.getElementById('ct-dvic-close').addEventListener('click', () => this.hide());
+
+      // Tab switching via event delegation
+      overlay.querySelector('.ct-dvic-tabs').addEventListener('click', (e) => {
+        const btn = e.target.closest('.ct-dvic-tab');
+        if (!btn) return;
+        this._switchTab(btn.dataset.tab);
+      });
+
+      onDispose(() => this.dispose());
+      log('DVIC Check initialized');
+    },
+
+    dispose() {
+      if (this._overlayEl) { this._overlayEl.remove(); this._overlayEl = null; }
+      this._vehicles = [];
+      this._active = false;
+      this._lastTimestamp = null;
+      this._loading = false;
+      // intentionally keep _nameCache alive across dispose/re-init cycles
+    },
+
+    toggle() {
+      if (!config.features.dvicCheck) {
+        alert('DVIC Check ist deaktiviert. Bitte in den Einstellungen aktivieren.');
+        return;
+      }
+      this.init();
+      if (this._active) this.hide(); else this.show();
+    },
+
+    show() {
+      this.init();
+      this._overlayEl.classList.add('visible');
+      this._active = true;
+      // Reset to first page and "all" tab on each open, then re-fetch
+      this._pageCurrent = 1;
+      this._pageMissing = 1;
+      this._currentTab = 'all';
+      this._switchTab('all');
+      this._refresh();
+    },
+
+    hide() {
+      if (this._overlayEl) this._overlayEl.classList.remove('visible');
+      this._active = false;
+    },
+
+    // ── Tab management ───────────────────────────────────
+    _switchTab(tab) {
+      this._currentTab = tab;
+      this._overlayEl.querySelectorAll('.ct-dvic-tab').forEach((btn) => {
+        const active = btn.dataset.tab === tab;
+        btn.classList.toggle('ct-dvic-tab--active', active);
+        btn.setAttribute('aria-selected', String(active));
+      });
+      if (this._vehicles.length > 0) this._renderBody();
+    },
+
+    // ── Timestamp: today's midnight in Europe/Berlin ─────
+    _getTodayBremenTimestamp() {
+      const now = new Date();
+      // 'sv' locale always outputs "YYYY-MM-DD"
+      const dateStr = now.toLocaleDateString('sv', { timeZone: 'Europe/Berlin' });
+      const [y, mo, d] = dateStr.split('-').map(Number);
+
+      // Determine UTC offset by inspecting what Berlin time is at 06:00 UTC on that day
+      const utcRef = new Date(Date.UTC(y, mo - 1, d, 6, 0, 0));
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'Europe/Berlin',
+        hour: 'numeric',
+        minute: 'numeric',
+        hour12: false,
+      }).formatToParts(utcRef);
+      const berlinH = parseInt(parts.find((p) => p.type === 'hour').value, 10) % 24;
+      const berlinM = parseInt(parts.find((p) => p.type === 'minute').value, 10);
+      const offsetMinutes = (berlinH * 60 + berlinM) - 6 * 60; // offset relative to UTC+0
+
+      // Berlin midnight = UTC midnight minus offset
+      return Date.UTC(y, mo - 1, d) - offsetMinutes * 60000;
+    },
+
+    // ── API ──────────────────────────────────────────────
+    async _fetchInspectionStats(timestamp) {
+      const url =
+        `https://logistics.amazon.de/fleet-management/api/inspection-stats` +
+        `?startTimestamp=${timestamp}`;
+      const csrf = getCSRFToken();
+      const headers = { Accept: 'application/json' };
+      if (csrf) headers['anti-csrftoken-a2z'] = csrf;
+
+      const resp = await withRetry(async () => {
+        const r = await fetch(url, { method: 'GET', headers, credentials: 'include' });
+        if (!r.ok) throw new Error(`HTTP ${r.status}: ${r.statusText}`);
+        return r;
+      }, { retries: 2, baseMs: 800 });
+
+      return resp.json();
+    },
+
+    // ── Employee name batch lookup ────────────────────────
+    /**
+     * Batch fetch employee names for an array of reporterIds.
+     * Returns a Map<id, resolvedDisplayName>.
+     *
+     * Batch API contract (adjust endpoint as needed):
+     *   GET /fleet-management/api/employees?employeeIds=A&employeeIds=B…
+     *   Response: Array<{employeeId, name}> or {employees:[…]} or {data:[…]}
+     *
+     * Falls back to the reporterId as the display name when:
+     *   – the request fails, or
+     *   – the ID is not present in the response.
+     *
+     * @param {string[]} reporterIds
+     * @returns {Promise<Map<string, string>>}
+     */
+    async _getEmployeeNames(reporterIds) {
+      const unique = [...new Set(reporterIds)];
+      const uncached = unique.filter((id) => !this._nameCache.has(id));
+
+      if (uncached.length > 0) {
+        try {
+          const csrf = getCSRFToken();
+          const headers = { Accept: 'application/json' };
+          if (csrf) headers['anti-csrftoken-a2z'] = csrf;
+
+          // Build query string: ?employeeIds=A&employeeIds=B…
+          const qs = uncached
+            .map((id) => `employeeIds=${encodeURIComponent(id)}`)
+            .join('&');
+
+          const resp = await fetch(
+            `https://logistics.amazon.de/fleet-management/api/employees?${qs}`,
+            { method: 'GET', headers, credentials: 'include' }
+          );
+
+          if (resp.ok) {
+            const json = await resp.json();
+            // Tolerate Array or wrapped shapes
+            const list = Array.isArray(json)
+              ? json
+              : (json?.employees || json?.data || json?.results || []);
+
+            if (Array.isArray(list)) {
+              for (const emp of list) {
+                const id = String(
+                  emp.employeeId ?? emp.id ?? emp.reporterId ?? ''
+                );
+                const name =
+                  emp.name ?? emp.employeeName ?? emp.fullName ?? emp.displayName ?? '';
+                if (id && name) this._nameCache.set(id, name);
+              }
+            }
+          }
+        } catch (e) {
+          log('Employee batch lookup failed (non-fatal, IDs used as fallback):', e);
+        }
+      }
+
+      // Build result map — fall back to ID string for unresolved entries
+      const result = new Map();
+      for (const id of reporterIds) {
+        result.set(id, this._nameCache.get(id) || id);
+      }
+      return result;
+    },
+
+    // ── Data normalisation ────────────────────────────────
+    /**
+     * Normalise one element from inspectionsStatList into the output model.
+     * Guards against nulls/undefined/missing arrays.
+     *
+     * Output model (all fields guaranteed present):
+     *   vehicleIdentifier : string
+     *   preTripTotal      : number  – totalInspectionsDone for PRE_TRIP_DVIC  (0 when absent)
+     *   postTripTotal     : number  – totalInspectionsDone for POST_TRIP_DVIC (0 when absent)
+     *   missingCount      : number  – preTripTotal − postTripTotal (≥ 0; 0 when status=OK)
+     *   status            : "OK" | "Post Trip DVIC Missing"
+     *   inspectedAt       : string|null  – most recent inspectedAt across both trip types (ISO-8601 if present)
+     *   shiftDate         : string|null  – shiftDate from the stat entry (date string if present)
+     *   reporterIds       : string[]
+     *   reporterNames     : string[]  – filled after batch name lookup
+     */
+    _normalizeVehicle(vehicleStat) {
+      const vehicleIdentifier = String(vehicleStat?.vehicleIdentifier ?? '').trim() || 'Unknown';
+      const inspStats = Array.isArray(vehicleStat?.inspectionStats)
+        ? vehicleStat.inspectionStats
+        : [];
+
+      // Always resolve both trip-type entries explicitly; normalise VIN whitespace on lookup
+      const preStat  = inspStats.find((s) => s?.type === 'PRE_TRIP_DVIC')  ?? null;
+      const postStat = inspStats.find((s) => s?.type === 'POST_TRIP_DVIC') ?? null;
+
+      const preTripTotal  = Number(preStat?.totalInspectionsDone  ?? 0);
+      const postTripTotal = Number(postStat?.totalInspectionsDone ?? 0);
+
+      // status=OK whenever pre ≤ post (including both-zero = no inspection day)
+      const missingDVIC = preTripTotal - postTripTotal;
+      const status      = missingDVIC > 0 ? 'Post Trip DVIC Missing' : 'OK';
+      const missingCount = status === 'OK' ? 0 : missingDVIC;
+
+      // Extract timestamps if the API returns them (forward-compatible)
+      const candidateDates = [preStat, postStat]
+        .filter(Boolean)
+        .map((s) => s.inspectedAt ?? s.lastInspectedAt ?? null)
+        .filter(Boolean);
+      const inspectedAt = candidateDates.length > 0
+        ? candidateDates.sort().at(-1)   // most recent
+        : null;
+      const shiftDate = preStat?.shiftDate ?? postStat?.shiftDate ?? null;
+
+      // Collect unique reporter IDs across both trip types
+      const reporterIdSet = new Set();
+      for (const stat of inspStats) {
+        const details = Array.isArray(stat?.inspectionDetails) ? stat.inspectionDetails : [];
+        for (const detail of details) {
+          const rid = detail?.reporterId;
+          if (rid != null && String(rid).trim() !== '') reporterIdSet.add(String(rid).trim());
+        }
+      }
+
+      return {
+        vehicleIdentifier,
+        preTripTotal,
+        postTripTotal,
+        missingCount,
+        status,
+        inspectedAt,
+        shiftDate,
+        reporterIds: [...reporterIdSet],
+        reporterNames: [], // filled after batch name lookup
+      };
+    },
+
+    /**
+     * Parse the full API JSON into an array of normalised vehicle records.
+     * Returns [] for an empty day; throws on truly unexpected shapes.
+     */
+    _processApiResponse(json) {
+      if (json === null || typeof json !== 'object') {
+        throw new Error('API response is not a JSON object');
+      }
+      const list = json?.inspectionsStatList;
+      if (list === undefined || list === null) return []; // valid empty response
+      if (!Array.isArray(list)) {
+        throw new Error(
+          `inspectionsStatList has unexpected type: ${typeof list}`
+        );
+      }
+      return list.map((v) => this._normalizeVehicle(v));
+    },
+
+    // ── Refresh (main data-fetch flow) ────────────────────
+    async _refresh() {
+      if (this._loading) return;
+      this._loading = true;
+      this._vehicles = [];
+
+      const ts = this._getTodayBremenTimestamp();
+      this._lastTimestamp = ts;
+      const dateLabel = new Date(ts).toLocaleDateString('de-DE', {
+        timeZone: 'Europe/Berlin', day: '2-digit', month: '2-digit', year: 'numeric',
+      });
+
+      this._setStatus(`⏳ Lade DVIC-Daten für heute (${dateLabel})…`);
+      this._setTiles('');
+      this._setBody(
+        '<div class="ct-dvic-loading" role="status">Daten werden geladen…</div>'
+      );
+
+      try {
+        const json = await this._fetchInspectionStats(ts);
+
+        let vehicles;
+        try {
+          vehicles = this._processApiResponse(json);
+        } catch (parseErr) {
+          err('DVIC response parse error:', parseErr);
+          this._setBody(`
+            <div class="ct-dvic-error" role="alert">
+              ⚠️ DVIC data unavailable for this date.<br>
+              <small>${esc(parseErr.message)}</small>
+            </div>`);
+          this._setStatus('⚠️ Daten konnten nicht verarbeitet werden.');
+          this._loading = false;
+          return;
+        }
+
+        // --- Batch employee-name lookup ---
+        const allIds = [...new Set(vehicles.flatMap((v) => v.reporterIds))];
+        if (allIds.length > 0) {
+          this._setStatus('⏳ Lade Mitarbeiternamen…');
+          try {
+            const nameMap = await this._getEmployeeNames(allIds);
+            for (const v of vehicles) {
+              v.reporterNames = [
+                ...new Set(v.reporterIds.map((id) => nameMap.get(id) || id)),
+              ];
+            }
+          } catch (nameErr) {
+            log('Name enrichment failed, using IDs as fallback:', nameErr);
+            for (const v of vehicles) {
+              v.reporterNames = [...v.reporterIds];
+            }
+          }
+        } else {
+          for (const v of vehicles) { v.reporterNames = []; }
+        }
+
+        this._vehicles = vehicles;
+
+        const missingVehicles = vehicles.filter((v) => v.status !== 'OK').length;
+        const totalMissing    = vehicles.reduce((s, v) => s + v.missingCount, 0);
+
+        this._setStatus(
+          `✅ ${vehicles.length} Fahrzeuge | ` +
+          `${missingVehicles} mit fehlendem Post-Trip DVIC | ` +
+          `${totalMissing} fehlende DVICs gesamt`
+        );
+        // Update "as of" freshness timestamp
+        const asOfEl = document.getElementById('ct-dvic-asof');
+        if (asOfEl) {
+          const fetchedAt = new Date().toLocaleString('de-DE', {
+            timeZone: 'Europe/Berlin',
+            day: '2-digit', month: '2-digit', year: 'numeric',
+            hour: '2-digit', minute: '2-digit', second: '2-digit',
+          });
+          asOfEl.textContent = `Stand: ${fetchedAt} (Daten ab ${dateLabel})`;
+        }
+        this._renderTiles(vehicles.length, missingVehicles, totalMissing);
+        this._updateMissingTabBadge(missingVehicles);
+        this._renderBody();
+
+      } catch (e) {
+        err('DVIC fetch failed:', e);
+        this._setBody(`
+          <div class="ct-dvic-error" role="alert">
+            ❌ DVIC-Daten konnten nicht geladen werden.<br>
+            <small>${esc(e.message)}</small><br><br>
+            <button class="ct-btn ct-btn--accent" id="ct-dvic-retry">🔄 Erneut versuchen</button>
+          </div>`);
+        this._setStatus('❌ Fehler beim Laden.');
+        document.getElementById('ct-dvic-retry')?.addEventListener(
+          'click', () => this._refresh()
+        );
+      } finally {
+        this._loading = false;
+      }
+    },
+
+    // ── Status / body helper setters ─────────────────────
+    _setStatus(msg) {
+      const el = document.getElementById('ct-dvic-status');
+      if (el) el.textContent = msg;
+    },
+    _setBody(html) {
+      const el = document.getElementById('ct-dvic-body');
+      if (el) el.innerHTML = html;
+    },
+    _setTiles(html) {
+      const el = document.getElementById('ct-dvic-tiles');
+      if (el) el.innerHTML = html;
+    },
+    _updateMissingTabBadge(count) {
+      const tab = document.getElementById('ct-dvic-tab-missing');
+      if (tab) {
+        tab.textContent = count > 0 ? `⚠️ DVIC Fehlend (${count})` : '⚠️ DVIC Fehlend';
+      }
+    },
+
+    // ── Rendering: summary tiles ──────────────────────────
+    _renderTiles(total, missingVehicles, missingTotal) {
+      const errCls =
+        missingVehicles === 0 ? 'ct-dvic-tile--ok' :
+        missingVehicles < 5  ? 'ct-dvic-tile--warn' :
+        'ct-dvic-tile--danger';
+
+      this._setTiles(`
+        <div class="ct-dvic-tiles">
+          <div class="ct-dvic-tile">
+            <div class="ct-dvic-tile-val">${total}</div>
+            <div class="ct-dvic-tile-lbl">Fahrzeuge gesamt</div>
+          </div>
+          <div class="ct-dvic-tile ${errCls}">
+            <div class="ct-dvic-tile-val">${missingVehicles}</div>
+            <div class="ct-dvic-tile-lbl">Fahrzeuge mit Fehler</div>
+          </div>
+          <div class="ct-dvic-tile ${missingTotal === 0 ? 'ct-dvic-tile--ok' : 'ct-dvic-tile--danger'}">
+            <div class="ct-dvic-tile-val">${missingTotal}</div>
+            <div class="ct-dvic-tile-lbl">DVIC fehlend gesamt</div>
+          </div>
+          <div class="ct-dvic-tile ${missingVehicles === 0 ? 'ct-dvic-tile--ok' : ''}">
+            <div class="ct-dvic-tile-val">${total - missingVehicles}</div>
+            <div class="ct-dvic-tile-lbl">Fahrzeuge OK</div>
+          </div>
+        </div>
+      `);
+    },
+
+    // ── Rendering: body dispatcher ────────────────────────
+    _renderBody() {
+      if (!this._overlayEl) return;
+      if (this._vehicles.length === 0) {
+        this._setBody(
+          '<div class="ct-dvic-empty">Keine DVIC-Daten verfügbar für dieses Datum.</div>'
+        );
+        return;
+      }
+      if (this._currentTab === 'all') {
+        this._renderAllTab();
+      } else {
+        this._renderMissingTab();
+      }
+    },
+
+    // ── Rendering: "All Vehicles" tab ─────────────────────
+    _renderAllTab() {
+      const page   = this._pageCurrent;
+      const total  = this._vehicles.length;
+      const totalPages = Math.ceil(total / this._pageSize);
+      const start  = (page - 1) * this._pageSize;
+      const slice  = this._vehicles.slice(start, start + this._pageSize);
+
+      const rows = slice.map((v, i) => {
+        const idx       = start + i;
+        const isMissing = v.status !== 'OK';
+        const rowCls    = isMissing ? 'ct-dvic-row--missing' : '';
+        const badgeCls  = isMissing ? 'ct-dvic-badge--missing' : 'ct-dvic-badge--ok';
+        const expandBtn = isMissing
+          ? `<button class="ct-dvic-expand-btn" data-expand="${idx}"
+                     aria-expanded="false" aria-controls="ct-dvic-detail-${idx}">▶ Details</button>`
+          : '';
+
+        return `
+          <tr class="${rowCls}" role="row">
+            <td>${esc(v.vehicleIdentifier)}</td>
+            <td>${v.preTripTotal}</td>
+            <td>${v.postTripTotal}</td>
+            <td>${v.missingCount > 0 ? `<strong>${v.missingCount}</strong>` : '0'}</td>
+            <td><span class="${badgeCls}">${esc(v.status)}</span></td>
+            <td>${expandBtn}</td>
+          </tr>
+          ${isMissing ? `
+          <tr id="ct-dvic-detail-${idx}" class="ct-dvic-detail-row" aria-hidden="true">
+            <td class="ct-dvic-detail-cell" colspan="6">
+              <strong>Transporter:</strong>
+              ${v.reporterNames.length > 0
+                ? esc(v.reporterNames.join(', '))
+                : '<em>Keine Daten</em>'}
+              ${v.reporterIds.length > 0
+                ? `<span style="color:#999;font-size:10px;margin-left:8px;">[IDs: ${esc(v.reporterIds.join(', '))}]</span>`
+                : ''}
+            </td>
+          </tr>` : ''}`;
+      }).join('');
+
+      this._setBody(`
+        <div role="tabpanel" aria-labelledby="ct-dvic-tab-all">
+          <table class="ct-table" role="grid">
+            <thead>
+              <tr>
+                <th scope="col">Fahrzeug</th>
+                <th scope="col" title="Anzahl abgeschlossener PRE_TRIP_DVIC-Inspektionen (totalInspectionsDone)">Pre-Trip ✓</th>
+                <th scope="col" title="Anzahl abgeschlossener POST_TRIP_DVIC-Inspektionen (totalInspectionsDone)">Post-Trip ✓</th>
+                <th scope="col" title="Pre-Trip − Post-Trip (fehlende Post-Trip DVICs)">Fehlend</th>
+                <th scope="col">Status</th>
+                <th scope="col" style="width:80px;"></th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+          ${this._renderPagination(total, page, totalPages, 'all')}
+        </div>
+      `);
+
+      this._attachExpandHandlers();
+      this._attachPaginationHandlers('all');
+    },
+
+    // ── Rendering: "Missing DVIC" aggregated tab ──────────
+    _renderMissingTab() {
+      const missing = this._vehicles.filter((v) => v.status !== 'OK');
+
+      if (missing.length === 0) {
+        this._setBody(
+          '<div class="ct-dvic-empty">✅ Alle Fahrzeuge haben Post-Trip DVICs — kein Handlungsbedarf.</div>'
+        );
+        return;
+      }
+
+      const page       = this._pageMissing;
+      const totalPages = Math.ceil(missing.length / this._pageSize);
+      const start      = (page - 1) * this._pageSize;
+      const slice      = missing.slice(start, start + this._pageSize);
+
+      const rows = slice.map((v) => `
+        <tr class="ct-dvic-row--missing" role="row">
+          <td>${esc(v.vehicleIdentifier)}</td>
+          <td>${v.preTripTotal}</td>
+          <td>${v.postTripTotal}</td>
+          <td><strong>${v.missingCount}</strong></td>
+          <td>${v.reporterNames.length > 0
+            ? esc(v.reporterNames.join(', '))
+            : '<em>—</em>'}</td>
+        </tr>`).join('');
+
+      this._setBody(`
+        <div role="tabpanel" aria-labelledby="ct-dvic-tab-missing">
+          <table class="ct-table" role="grid">
+            <thead>
+              <tr>
+                <th scope="col">Fahrzeug</th>
+                <th scope="col" title="Anzahl abgeschlossener PRE_TRIP_DVIC-Inspektionen (totalInspectionsDone)">Pre-Trip ✓</th>
+                <th scope="col" title="Anzahl abgeschlossener POST_TRIP_DVIC-Inspektionen (totalInspectionsDone)">Post-Trip ✓</th>
+                <th scope="col" title="Pre-Trip − Post-Trip (fehlende Post-Trip DVICs)">Fehlend</th>
+                <th scope="col">Transporter</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+          ${this._renderPagination(missing.length, page, totalPages, 'missing')}
+        </div>
+      `);
+
+      this._attachPaginationHandlers('missing');
+    },
+
+    // ── Rendering: pagination controls ───────────────────
+    _renderPagination(total, current, totalPages, tabKey) {
+      if (totalPages <= 1) return '';
+      return `
+        <div class="ct-dvic-pagination">
+          <button class="ct-btn ct-btn--secondary ct-dvic-prev-page" data-tab="${tabKey}"
+                  aria-label="Vorherige Seite" ${current <= 1 ? 'disabled' : ''}>&#8249; Zurück</button>
+          <span class="ct-dvic-page-info">Seite ${current} / ${totalPages} (${total} Einträge)</span>
+          <button class="ct-btn ct-btn--secondary ct-dvic-next-page" data-tab="${tabKey}"
+                  aria-label="Nächste Seite" ${current >= totalPages ? 'disabled' : ''}>Weiter &#8250;</button>
+        </div>`;
+    },
+
+    // ── Event binding ─────────────────────────────────────
+    _attachExpandHandlers() {
+      const body = document.getElementById('ct-dvic-body');
+      if (!body) return;
+      body.querySelectorAll('.ct-dvic-expand-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const idx       = btn.dataset.expand;
+          const detailRow = document.getElementById(`ct-dvic-detail-${idx}`);
+          if (!detailRow) return;
+          const isNowVisible = !detailRow.classList.contains('visible');
+          detailRow.classList.toggle('visible', isNowVisible);
+          detailRow.setAttribute('aria-hidden', String(!isNowVisible));
+          btn.setAttribute('aria-expanded', String(isNowVisible));
+          btn.textContent = isNowVisible ? '▼ Details' : '▶ Details';
+        });
+      });
+    },
+
+    _attachPaginationHandlers(tabKey) {
+      const body = document.getElementById('ct-dvic-body');
+      if (!body) return;
+
+      body.querySelector(`.ct-dvic-prev-page[data-tab="${tabKey}"]`)
+        ?.addEventListener('click', () => {
+          if (tabKey === 'all') {
+            if (this._pageCurrent > 1) { this._pageCurrent--; this._renderAllTab(); }
+          } else {
+            if (this._pageMissing > 1) { this._pageMissing--; this._renderMissingTab(); }
+          }
+        });
+
+      body.querySelector(`.ct-dvic-next-page[data-tab="${tabKey}"]`)
+        ?.addEventListener('click', () => {
+          const total = tabKey === 'all'
+            ? this._vehicles.length
+            : this._vehicles.filter((v) => v.status !== 'OK').length;
+          const totalPages = Math.ceil(total / this._pageSize);
+          if (tabKey === 'all') {
+            if (this._pageCurrent < totalPages) { this._pageCurrent++; this._renderAllTab(); }
+          } else {
+            if (this._pageMissing < totalPages) { this._pageMissing++; this._renderMissingTab(); }
+          }
+        });
+    },
+  };
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // SETTINGS DIALOG
   // ═══════════════════════════════════════════════════════════════════════════
 
@@ -2118,10 +2879,11 @@
       <div class="ct-dialog" style="min-width: 400px;">
         <h3>⚙ Einstellungen</h3>
 
-        ${toggleHTML('ct-set-whc', 'WHC Dashboard', config.features.whcDashboard)}
-        ${toggleHTML('ct-set-dre', 'Date Range Extractor', config.features.dateExtractor)}
-        ${toggleHTML('ct-set-dp',  'Daily Delivery Performance', config.features.deliveryPerf)}
-        ${toggleHTML('ct-set-dev', 'Dev-Mode (ausführliches Logging)', config.dev)}
+        ${toggleHTML('ct-set-whc',  'WHC Dashboard', config.features.whcDashboard)}
+        ${toggleHTML('ct-set-dre',  'Date Range Extractor', config.features.dateExtractor)}
+        ${toggleHTML('ct-set-dp',   'Daily Delivery Performance', config.features.deliveryPerf)}
+        ${toggleHTML('ct-set-dvic', 'DVIC Check', config.features.dvicCheck)}
+        ${toggleHTML('ct-set-dev',  'Dev-Mode (ausführliches Logging)', config.dev)}
 
         <div class="ct-settings-row" style="flex-direction: column; align-items: stretch; gap: 6px;">
           <label style="margin-bottom: 2px;"><strong>Delivery Perf — Default Station:</strong></label>
@@ -2157,9 +2919,10 @@
     document.getElementById('ct-set-cancel').addEventListener('click', () => overlay.remove());
 
     document.getElementById('ct-set-save').addEventListener('click', () => {
-      config.features.whcDashboard = document.getElementById('ct-set-whc').checked;
+      config.features.whcDashboard  = document.getElementById('ct-set-whc').checked;
       config.features.dateExtractor = document.getElementById('ct-set-dre').checked;
-      config.features.deliveryPerf = document.getElementById('ct-set-dp').checked;
+      config.features.deliveryPerf  = document.getElementById('ct-set-dp').checked;
+      config.features.dvicCheck     = document.getElementById('ct-set-dvic').checked;
       config.dev = document.getElementById('ct-set-dev').checked;
       config.deliveryPerfStation = document.getElementById('ct-set-dp-station').value.trim().toUpperCase() || 'XYZ1';
       config.deliveryPerfDsp     = document.getElementById('ct-set-dp-dsp').value.trim().toUpperCase() || 'TEST';
@@ -2257,6 +3020,7 @@
   GM_registerMenuCommand('📊 WHC Dashboard', () => whcDashboard.toggle());
   GM_registerMenuCommand('📅 Date Range Extractor', () => dateRangeExtractor.showDialog());
   GM_registerMenuCommand('📦 Daily Delivery Performance', () => deliveryPerformance.toggle());
+  GM_registerMenuCommand('🚛 DVIC Check', () => dvicCheck.toggle());
   GM_registerMenuCommand('⚙ Einstellungen', openSettings);
   GM_registerMenuCommand('⏸ Skript pausieren', () => {
     config.enabled = false;
