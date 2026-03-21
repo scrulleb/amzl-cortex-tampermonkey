@@ -63,8 +63,9 @@ function normalizeVehicle(vehicleStat) {
     ? vehicleStat.inspectionStats
     : [];
 
-  const preStat  = inspStats.find((s) => s?.type === 'PRE_TRIP_DVIC')  ?? null;
-  const postStat = inspStats.find((s) => s?.type === 'POST_TRIP_DVIC') ?? null;
+  // API returns `inspectionType` (not `type`)
+  const preStat  = inspStats.find((s) => (s?.inspectionType ?? s?.type) === 'PRE_TRIP_DVIC')  ?? null;
+  const postStat = inspStats.find((s) => (s?.inspectionType ?? s?.type) === 'POST_TRIP_DVIC') ?? null;
 
   const preTripTotal  = Number(preStat?.totalInspectionsDone  ?? 0);
   const postTripTotal = Number(postStat?.totalInspectionsDone ?? 0);
@@ -135,14 +136,14 @@ function makeVehicleStat({
 
   // Always include both entries (normalised response)
   inspectionStats.push({
-    type: 'PRE_TRIP_DVIC',
+    inspectionType: 'PRE_TRIP_DVIC',
     totalInspectionsDone: preCount,
     ...(preInspectedAt ? { inspectedAt: preInspectedAt } : {}),
     ...(preShiftDate   ? { shiftDate: preShiftDate }      : {}),
     inspectionDetails: preReporters.map((id) => ({ reporterId: id })),
   });
   inspectionStats.push({
-    type: 'POST_TRIP_DVIC',
+    inspectionType: 'POST_TRIP_DVIC',
     totalInspectionsDone: postCount,
     ...(postInspectedAt ? { inspectedAt: postInspectedAt } : {}),
     ...(postShiftDate   ? { shiftDate: postShiftDate }      : {}),
@@ -198,7 +199,7 @@ describe('missing PRE_TRIP_DVIC entry in inspectionStats', () => {
   const stat = {
     vehicleIdentifier: 'VAN-PRE-ABSENT',
     inspectionStats: [
-      { type: 'POST_TRIP_DVIC', totalInspectionsDone: 2, inspectionDetails: [] },
+      { inspectionType: 'POST_TRIP_DVIC', totalInspectionsDone: 2, inspectionDetails: [] },
     ],
   };
   const v = normalizeVehicle(stat);
@@ -213,7 +214,7 @@ describe('missing POST_TRIP_DVIC entry in inspectionStats', () => {
   const stat = {
     vehicleIdentifier: 'VAN-POST-ABSENT',
     inspectionStats: [
-      { type: 'PRE_TRIP_DVIC', totalInspectionsDone: 3, inspectionDetails: [] },
+      { inspectionType: 'PRE_TRIP_DVIC', totalInspectionsDone: 3, inspectionDetails: [] },
     ],
   };
   const v = normalizeVehicle(stat);
@@ -255,8 +256,8 @@ describe('inspectedAt — most recent timestamp is selected', () => {
   const stat = {
     vehicleIdentifier: 'VAN-TS',
     inspectionStats: [
-      { type: 'PRE_TRIP_DVIC',  totalInspectionsDone: 1, inspectedAt: '2026-03-20T06:00:00Z', inspectionDetails: [] },
-      { type: 'POST_TRIP_DVIC', totalInspectionsDone: 1, inspectedAt: '2026-03-20T18:30:00Z', inspectionDetails: [] },
+      { inspectionType: 'PRE_TRIP_DVIC',  totalInspectionsDone: 1, inspectedAt: '2026-03-20T06:00:00Z', inspectionDetails: [] },
+      { inspectionType: 'POST_TRIP_DVIC', totalInspectionsDone: 1, inspectedAt: '2026-03-20T18:30:00Z', inspectionDetails: [] },
     ],
   };
   const v = normalizeVehicle(stat);
@@ -340,6 +341,132 @@ describe('output model shape — all required fields are present', () => {
     assert(field in v, `output model contains "${field}"`);
   }
 });
+
+// ─── Transporter Rendering ────────────────────────────────────────────────────
+// Mirrors dvicCheck._renderTransporterNames() — keep in sync.
+
+function esc(s) {
+  return String(s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// nameCache mirrors dvicCheck._nameCache — id → resolved name
+function renderTransporterNames(v, nameCache = new Map()) {
+  const ids = (v.reporterIds ?? []).filter((id) => String(id).trim() !== '');
+  if (ids.length === 0) {
+    return `<em class="ct-dvic-tp-unknown" aria-label="Unbekannter Transporter">Unbekannter Transporter</em>`;
+  }
+  const labels = ids.map((id) => {
+    const name = nameCache.get(id);
+    return (name && name !== id) ? `${name} (ID: ${id})` : id;
+  });
+  const [primary, ...rest] = labels;
+  const secondary = rest.length > 0
+    ? `<span class="ct-dvic-tp-secondary">, ${esc(rest.join(', '))}</span>`
+    : '';
+  return `<span class="ct-dvic-tp-primary" aria-label="Transporter: ${esc(labels.join(', '))}">${esc(primary)}${secondary}</span>`;
+}
+
+describe('renderTransporterNames — single transporter with resolved name', () => {
+  const cache = new Map([['A3GXI0B678GWLJ', 'Anna Müller']]);
+  const v = { vehicleIdentifier: 'VAN-726', reporterNames: ['Anna Müller'], reporterIds: ['A3GXI0B678GWLJ'] };
+  const html = renderTransporterNames(v, cache);
+  assert(html.includes('Anna Müller'), 'name rendered');
+  assert(html.includes('ID: A3GXI0B678GWLJ'), 'ID shown alongside name');
+  assert(html.includes('ct-dvic-tp-primary'), 'primary CSS class present');
+  assert(!html.includes('ct-dvic-tp-secondary'), 'no secondary span for single reporter');
+  assert(html.includes('aria-label="Transporter: Anna M'), 'aria-label present');
+});
+
+describe('renderTransporterNames — multiple transporters (primary first)', () => {
+  const cache = new Map([['ID1', 'Anna Müller'], ['ID2', 'Ben Berg']]);
+  const v = { vehicleIdentifier: 'VAN-001', reporterNames: ['Anna Müller', 'Ben Berg'], reporterIds: ['ID1', 'ID2'] };
+  const html = renderTransporterNames(v, cache);
+  assert(html.includes('Anna Müller (ID: ID1)'), 'primary transporter rendered with ID');
+  assert(html.includes('ct-dvic-tp-secondary'), 'secondary span present');
+  assert(html.includes('Ben Berg (ID: ID2)'), 'secondary transporter rendered with ID');
+  const primaryIdx = html.indexOf('Anna Müller');
+  const secondaryIdx = html.indexOf('Ben Berg');
+  assert(primaryIdx < secondaryIdx, 'primary appears before secondary');
+});
+
+describe('renderTransporterNames — missing transporter data (empty reporterIds)', () => {
+  const v = { vehicleIdentifier: 'VAN-002', reporterNames: [], reporterIds: [] };
+  const html = renderTransporterNames(v);
+  assert(html.includes('Unbekannter Transporter'), '"Unbekannter Transporter" fallback shown');
+  assert(html.includes('ct-dvic-tp-unknown'), 'unknown CSS class present');
+  assert(html.includes('aria-label="Unbekannter Transporter"'), 'aria-label on fallback');
+});
+
+describe('renderTransporterNames — unresolved ID shown as bare ID (no double display)', () => {
+  // When name lookup fails, ID is shown without "(ID: id)" duplication
+  const v = { vehicleIdentifier: 'VAN-006', reporterNames: ['A3GXI0B678GWLJ'], reporterIds: ['A3GXI0B678GWLJ'] };
+  const html = renderTransporterNames(v); // empty cache → fallback
+  assert(html.includes('A3GXI0B678GWLJ'), 'ID present in output');
+  assert(!html.includes('ID: A3GXI0B678GWLJ'), 'no "ID:" prefix when name not resolved');
+  assert(html.includes('ct-dvic-tp-primary'), 'ID rendered as primary name');
+  assert(!html.includes('Unbekannter Transporter'), 'fallback not shown when ID is available');
+});
+
+describe('renderTransporterNames — long transporter name (no truncation in markup)', () => {
+  const longName = 'Maximilian Bartholomäus von Hohenzollern-Sigmaringen';
+  const cache = new Map([['ID1', longName]]);
+  const v = { vehicleIdentifier: 'VAN-004', reporterNames: [longName], reporterIds: ['ID1'] };
+  const html = renderTransporterNames(v, cache);
+  assert(html.includes(longName), 'long name rendered in full');
+  assert(html.includes('ct-dvic-tp-primary'), 'primary CSS class present');
+});
+
+describe('renderTransporterNames — HTML in name is escaped', () => {
+  const xss = '<script>alert(1)</script>';
+  const cache = new Map([['ID1', xss]]);
+  const v = { vehicleIdentifier: 'VAN-005', reporterNames: [xss], reporterIds: ['ID1'] };
+  const html = renderTransporterNames(v, cache);
+  assert(!html.includes('<script>'), 'raw <script> tag not in output');
+  assert(html.includes('&lt;script&gt;'), 'name is HTML-escaped');
+});
+
+describe('toggle state — dvicShowTransporters defaults to true in DEFAULTS', () => {
+  // Mirrors the DEFAULTS config check
+  const DEFAULTS_FEATURES = { dvicShowTransporters: true };
+  assertEqual(DEFAULTS_FEATURES.dvicShowTransporters, true, 'dvicShowTransporters default is true');
+});
+
+describe('toggle state — _showTransporters respects config flag', () => {
+  // Simulates dvicCheck._showTransporters getter
+  const showWhenTrue  = (cfg) => cfg.features.dvicShowTransporters !== false;
+  assertEqual(showWhenTrue({ features: { dvicShowTransporters: true  } }), true,  'true → show');
+  assertEqual(showWhenTrue({ features: { dvicShowTransporters: false } }), false, 'false → hide');
+  assertEqual(showWhenTrue({ features: {} }),                              true,  'missing key → show (safe default)');
+});
+
+// ─── Sample Dataset ───────────────────────────────────────────────────────────
+// Illustrates several line items with transporterNames from a real-style payload.
+// Used as documentation for stakeholders on data contract expectations.
+//
+// Payload key:  inspectionsStatList[].inspectionStats[].inspectionDetails[].reporterId
+// Resolved to:  vehicle.reporterNames[]  (via _getEmployeeNames batch lookup)
+//
+// VAN-726 (id 726, role Helper):
+//   reporterIds:   ["A3GXI0B678GWLJ"]
+//   nameCache:     A3GXI0B678GWLJ → "Anna Müller"
+//   rendered:      <span class="ct-dvic-tp-primary">Anna Müller (ID: A3GXI0B678GWLJ)</span>
+//
+// VAN-042 (two inspectors):
+//   reporterIds:   ["E001", "E002"]
+//   nameCache:     E001 → "Ben Berg", E002 → "Clara Cruz"
+//   rendered:      Ben Berg (ID: E001)<span class="ct-dvic-tp-secondary">, Clara Cruz (ID: E002)</span>
+//
+// VAN-099 (lookup failed → bare ID):
+//   reporterIds:   ["UNKNOWN_ID"]
+//   nameCache:     (no entry)
+//   rendered:      <span class="ct-dvic-tp-primary">UNKNOWN_ID</span>
+//
+// VAN-000 (no inspections yet):
+//   reporterIds:   []
+//   reporterNames: []
+//   rendered:      <em class="ct-dvic-tp-unknown">Unbekannter Transporter</em>
 
 // ─── Summary ─────────────────────────────────────────────────────────────────
 

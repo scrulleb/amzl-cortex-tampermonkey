@@ -32,6 +32,7 @@
       dateExtractor: true,
       deliveryPerf: true,
       dvicCheck: true,
+      dvicShowTransporters: true,
     },
   };
 
@@ -530,6 +531,38 @@
     .ct-dvic-empty { text-align: center; padding: 30px; color: var(--ct-muted); }
     .ct-dvic-loading {
       text-align: center; padding: 40px; color: var(--ct-muted); font-style: italic;
+    }
+
+    /* ── Transporter column ──────────────────────────────── */
+    .ct-dvic-toolbar {
+      display: flex; align-items: center; gap: 8px;
+      margin-bottom: 8px; flex-wrap: wrap;
+    }
+    .ct-dvic-tp-toggle {
+      font-size: 11px; padding: 3px 10px;
+      border: 1px solid var(--ct-border); border-radius: 4px;
+      background: #f7f8fa; cursor: pointer; color: var(--ct-primary);
+      font-family: var(--ct-font);
+    }
+    .ct-dvic-tp-toggle:hover { background: #e7f3ff; }
+    .ct-dvic-tp-toggle[aria-pressed="true"] { background: #e7f3ff; border-color: var(--ct-info); }
+
+    .ct-dvic-tp-th {
+      min-width: 140px; max-width: 260px;
+    }
+    .ct-dvic-tp-cell {
+      font-size: 12px; color: var(--ct-primary);
+      white-space: normal; word-break: break-word;
+      max-width: 260px; min-width: 120px;
+    }
+    .ct-dvic-tp-primary { font-weight: 500; }
+    .ct-dvic-tp-secondary { color: var(--ct-muted); font-weight: normal; }
+    .ct-dvic-tp-unknown { color: var(--ct-muted); font-style: italic; font-size: 11px; }
+
+    /* Responsive: stack transporter below vehicle on narrow panels */
+    @media (max-width: 680px) {
+      .ct-dvic-table { display: block; overflow-x: auto; }
+      .ct-dvic-tp-cell { display: block; max-width: 100%; }
     }
   `);
 
@@ -2224,6 +2257,9 @@
     _pageMissing: 1,
     _currentTab: 'all', // 'all' | 'missing'
 
+    // Transporter column visibility (synced to config.features.dvicShowTransporters)
+    get _showTransporters() { return config.features.dvicShowTransporters !== false; },
+
     // ── Lifecycle ─────────────────────────────────────────
     init() {
       if (this._overlayEl) return;
@@ -2451,8 +2487,9 @@
         : [];
 
       // Always resolve both trip-type entries explicitly; normalise VIN whitespace on lookup
-      const preStat  = inspStats.find((s) => s?.type === 'PRE_TRIP_DVIC')  ?? null;
-      const postStat = inspStats.find((s) => s?.type === 'POST_TRIP_DVIC') ?? null;
+      // API returns `inspectionType` (not `type`)
+      const preStat  = inspStats.find((s) => (s?.inspectionType ?? s?.type) === 'PRE_TRIP_DVIC')  ?? null;
+      const postStat = inspStats.find((s) => (s?.inspectionType ?? s?.type) === 'POST_TRIP_DVIC') ?? null;
 
       const preTripTotal  = Number(preStat?.totalInspectionsDone  ?? 0);
       const postTripTotal = Number(postStat?.totalInspectionsDone ?? 0);
@@ -2676,6 +2713,48 @@
       }
     },
 
+    // ── Rendering: transporter names cell ────────────────
+    /**
+     * Render transporter names for a vehicle row.
+     * Primary transporter first; subsequent names comma-separated.
+     * Falls back to "Unbekannter Transporter" and emits a warning
+     * when reporterNames is empty or contains only empty strings.
+     *
+     * Example (id 726, role Helper):
+     *   reporterNames: ["Anna Müller"]  →  <span>Anna Müller</span>
+     *   reporterNames: ["Anna Müller", "Ben Berg"]  →
+     *     <span>Anna Müller</span><span class="ct-dvic-tp-secondary">, Ben Berg</span>
+     *   reporterNames: []  →  <em class="ct-dvic-tp-unknown">Unbekannter Transporter</em>
+     */
+    _renderTransporterNames(v) {
+      const ids = (v.reporterIds ?? []).filter((id) => String(id).trim() !== '');
+
+      if (ids.length === 0) {
+        return `<em class="ct-dvic-tp-unknown" aria-label="Unbekannter Transporter">Unbekannter Transporter</em>`;
+      }
+
+      // Build "Name (ID: id)" labels; fall back to bare ID when name not resolved
+      const labels = ids.map((id) => {
+        const name = this._nameCache.get(id);
+        return (name && name !== id)
+          ? `${name} (ID: ${id})`
+          : id;
+      });
+
+      if (labels.length === 0) {
+        if (ids.length > 0) {
+          err(`[DVIC] Vehicle ${v.vehicleIdentifier}: reporterIds present but no resolved names — check employee lookup.`);
+        }
+        return `<em class="ct-dvic-tp-unknown" aria-label="Unbekannter Transporter">Unbekannter Transporter</em>`;
+      }
+
+      const [primary, ...rest] = labels;
+      const secondary = rest.length > 0
+        ? `<span class="ct-dvic-tp-secondary">, ${esc(rest.join(', '))}</span>`
+        : '';
+      return `<span class="ct-dvic-tp-primary" aria-label="Transporter: ${esc(labels.join(', '))}">${esc(primary)}${secondary}</span>`;
+    },
+
     // ── Rendering: "All Vehicles" tab ─────────────────────
     _renderAllTab() {
       const page   = this._pageCurrent;
@@ -2683,16 +2762,17 @@
       const totalPages = Math.ceil(total / this._pageSize);
       const start  = (page - 1) * this._pageSize;
       const slice  = this._vehicles.slice(start, start + this._pageSize);
+      const showTp = this._showTransporters;
 
       const rows = slice.map((v, i) => {
         const idx       = start + i;
         const isMissing = v.status !== 'OK';
         const rowCls    = isMissing ? 'ct-dvic-row--missing' : '';
         const badgeCls  = isMissing ? 'ct-dvic-badge--missing' : 'ct-dvic-badge--ok';
-        const expandBtn = isMissing
-          ? `<button class="ct-dvic-expand-btn" data-expand="${idx}"
-                     aria-expanded="false" aria-controls="ct-dvic-detail-${idx}">▶ Details</button>`
-          : '';
+
+        // Transporter display: primary first, rest comma-separated
+        const tpCell = showTp ? `<td class="ct-dvic-tp-cell" data-label="Transporter">${this._renderTransporterNames(v)}</td>` : '';
+        const colSpan = showTp ? 7 : 6;
 
         return `
           <tr class="${rowCls}" role="row">
@@ -2700,26 +2780,28 @@
             <td>${v.preTripTotal}</td>
             <td>${v.postTripTotal}</td>
             <td>${v.missingCount > 0 ? `<strong>${v.missingCount}</strong>` : '0'}</td>
-            <td><span class="${badgeCls}">${esc(v.status)}</span></td>
-            <td>${expandBtn}</td>
-          </tr>
-          ${isMissing ? `
-          <tr id="ct-dvic-detail-${idx}" class="ct-dvic-detail-row" aria-hidden="true">
-            <td class="ct-dvic-detail-cell" colspan="6">
-              <strong>Transporter:</strong>
-              ${v.reporterNames.length > 0
-                ? esc(v.reporterNames.join(', '))
-                : '<em>Keine Daten</em>'}
-              ${v.reporterIds.length > 0
-                ? `<span style="color:#999;font-size:10px;margin-left:8px;">[IDs: ${esc(v.reporterIds.join(', '))}]</span>`
-                : ''}
-            </td>
-          </tr>` : ''}`;
+            <td><span class="${badgeCls}" aria-label="Status: ${esc(v.status)}">${esc(v.status)}</span></td>
+            ${tpCell}
+            <td></td>
+          </tr>`;
       }).join('');
+
+      const tpToggleLabel = showTp ? 'Transporter ausblenden' : 'Transporter einblenden';
+      const tpHeader = showTp
+        ? `<th scope="col" class="ct-dvic-tp-th" aria-label="Transporter">Transporter</th>`
+        : '';
 
       this._setBody(`
         <div role="tabpanel" aria-labelledby="ct-dvic-tab-all">
-          <table class="ct-table" role="grid">
+          <div class="ct-dvic-toolbar">
+            <button class="ct-dvic-tp-toggle ct-btn ct-btn--sm"
+                    id="ct-dvic-tp-toggle"
+                    aria-pressed="${showTp}"
+                    title="${tpToggleLabel}">
+              👤 ${tpToggleLabel}
+            </button>
+          </div>
+          <table class="ct-table ct-dvic-table" role="grid">
             <thead>
               <tr>
                 <th scope="col">Fahrzeug</th>
@@ -2727,7 +2809,8 @@
                 <th scope="col" title="Anzahl abgeschlossener POST_TRIP_DVIC-Inspektionen (totalInspectionsDone)">Post-Trip ✓</th>
                 <th scope="col" title="Pre-Trip − Post-Trip (fehlende Post-Trip DVICs)">Fehlend</th>
                 <th scope="col">Status</th>
-                <th scope="col" style="width:80px;"></th>
+                ${tpHeader}
+                <th scope="col" style="width:4px;"></th>
               </tr>
             </thead>
             <tbody>${rows}</tbody>
@@ -2736,7 +2819,12 @@
         </div>
       `);
 
-      this._attachExpandHandlers();
+      document.getElementById('ct-dvic-tp-toggle')?.addEventListener('click', () => {
+        config.features.dvicShowTransporters = !this._showTransporters;
+        setConfig(config);
+        this._renderBody();
+      });
+
       this._attachPaginationHandlers('all');
     },
 
@@ -2756,27 +2844,45 @@
       const start      = (page - 1) * this._pageSize;
       const slice      = missing.slice(start, start + this._pageSize);
 
-      const rows = slice.map((v) => `
+      const showTp = this._showTransporters;
+
+      const rows = slice.map((v) => {
+        const tpCell = showTp
+          ? `<td class="ct-dvic-tp-cell" data-label="Transporter">${this._renderTransporterNames(v)}</td>`
+          : '';
+        return `
         <tr class="ct-dvic-row--missing" role="row">
           <td>${esc(v.vehicleIdentifier)}</td>
           <td>${v.preTripTotal}</td>
           <td>${v.postTripTotal}</td>
           <td><strong>${v.missingCount}</strong></td>
-          <td>${v.reporterNames.length > 0
-            ? esc(v.reporterNames.join(', '))
-            : '<em>—</em>'}</td>
-        </tr>`).join('');
+          ${tpCell}
+        </tr>`;
+      }).join('');
+
+      const tpToggleLabel = showTp ? 'Transporter ausblenden' : 'Transporter einblenden';
+      const tpHeader = showTp
+        ? `<th scope="col" class="ct-dvic-tp-th" aria-label="Transporter">Transporter</th>`
+        : '';
 
       this._setBody(`
         <div role="tabpanel" aria-labelledby="ct-dvic-tab-missing">
-          <table class="ct-table" role="grid">
+          <div class="ct-dvic-toolbar">
+            <button class="ct-dvic-tp-toggle ct-btn ct-btn--sm"
+                    id="ct-dvic-tp-toggle"
+                    aria-pressed="${showTp}"
+                    title="${tpToggleLabel}">
+              👤 ${tpToggleLabel}
+            </button>
+          </div>
+          <table class="ct-table ct-dvic-table" role="grid">
             <thead>
               <tr>
                 <th scope="col">Fahrzeug</th>
                 <th scope="col" title="Anzahl abgeschlossener PRE_TRIP_DVIC-Inspektionen (totalInspectionsDone)">Pre-Trip ✓</th>
                 <th scope="col" title="Anzahl abgeschlossener POST_TRIP_DVIC-Inspektionen (totalInspectionsDone)">Post-Trip ✓</th>
                 <th scope="col" title="Pre-Trip − Post-Trip (fehlende Post-Trip DVICs)">Fehlend</th>
-                <th scope="col">Transporter</th>
+                ${tpHeader}
               </tr>
             </thead>
             <tbody>${rows}</tbody>
@@ -2784,6 +2890,12 @@
           ${this._renderPagination(missing.length, page, totalPages, 'missing')}
         </div>
       `);
+
+      document.getElementById('ct-dvic-tp-toggle')?.addEventListener('click', () => {
+        config.features.dvicShowTransporters = !this._showTransporters;
+        setConfig(config);
+        this._renderBody();
+      });
 
       this._attachPaginationHandlers('missing');
     },
