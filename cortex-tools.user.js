@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Cortex Tools
 // @namespace    https://github.com/jurib/amzl-cortex-tampermonkey
-// @version      1.2.2
+// @version      1.3.0
 // @description  Produktivitäts-Tools für logistics.amazon.de (Cortex)
 // @author       Juri B.
 // @match        https://logistics.amazon.de/*
@@ -35,6 +35,7 @@
       dvicShowTransporters: true,
       workingHours: true,
       returnsDashboard: true,
+      scorecard: true,
     },
   };
 
@@ -803,6 +804,80 @@
     .ct-ret-stat-lbl { font-size: 10px; color: var(--ct-muted); margin-top: 2px; }
   `);
 
+  GM_addStyle(`
+    /* ── Scorecard Dashboard ─────────────────────────────── */
+    .ct-sc-panel {
+      background: var(--ct-bg); border-radius: var(--ct-radius-lg);
+      padding: 24px; max-width: 1400px; width: 95vw; max-height: 92vh;
+      overflow-y: auto; box-shadow: var(--ct-shadow-heavy);
+      font-family: var(--ct-font);
+    }
+    .ct-sc-panel h2 { margin: 0 0 16px; color: var(--ct-primary); }
+
+    .ct-sc-tiles {
+      display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px;
+    }
+    .ct-sc-tile {
+      background: #f7f8fa; border: 1px solid #e0e0e0;
+      border-radius: var(--ct-radius); padding: 10px 18px;
+      text-align: center; flex: 1 1 100px; min-width: 90px;
+    }
+    .ct-sc-tile-val {
+      font-size: 22px; font-weight: bold; color: var(--ct-primary); line-height: 1.2;
+    }
+    .ct-sc-tile-lbl { font-size: 10px; color: var(--ct-muted); margin-top: 2px; }
+    .ct-sc-tile--fantastic .ct-sc-tile-val { color: rgb(77, 115, 190); }
+    .ct-sc-tile--great .ct-sc-tile-val { color: var(--ct-success); }
+    .ct-sc-tile--fair .ct-sc-tile-val { color: var(--ct-warning); }
+    .ct-sc-tile--poor .ct-sc-tile-val { color: var(--ct-danger); }
+
+    .ct-sc-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .ct-sc-table {
+      width: 100%; border-collapse: collapse; font-size: 12px;
+      font-family: var(--ct-font);
+    }
+    .ct-sc-table th, .ct-sc-table td {
+      border: 1px solid var(--ct-border); padding: 6px 8px;
+      text-align: center; white-space: nowrap;
+    }
+    .ct-sc-table th {
+      background: var(--ct-primary); color: var(--ct-accent);
+      position: sticky; top: 0; z-index: 1; cursor: pointer; user-select: none;
+    }
+    .ct-sc-table th:hover { background: #37475a; }
+    .ct-sc-table tr:nth-child(even) { background: #f9f9f9; }
+    .ct-sc-table tr:hover { background: #fff3d6; }
+
+    .ct-sc-status--poor { color: rgb(235, 50, 35); font-weight: bold; }
+    .ct-sc-status--fair { color: rgb(223, 130, 68); font-weight: bold; }
+    .ct-sc-status--great { color: rgb(126, 170, 85); font-weight: bold; }
+    .ct-sc-status--fantastic { color: rgb(77, 115, 190); font-weight: bold; }
+
+    .ct-sc-color--poor { color: rgb(235, 50, 35); }
+    .ct-sc-color--fair { color: rgb(223, 130, 68); }
+    .ct-sc-color--great { color: rgb(126, 170, 85); }
+    .ct-sc-color--fantastic { color: rgb(77, 115, 190); }
+
+    .ct-sc-loading, .ct-sc-empty, .ct-sc-error {
+      text-align: center; padding: 40px; color: var(--ct-muted); font-style: italic;
+    }
+    .ct-sc-error {
+      background: #fff0f0; border: 1px solid #ffcccc;
+      border-radius: var(--ct-radius); padding: 14px; color: var(--ct-danger);
+      font-style: normal;
+    }
+
+    .ct-sc-pagination {
+      display: flex; align-items: center; justify-content: center; gap: 12px;
+      margin-top: 12px; font-size: 13px;
+    }
+    .ct-sc-page-info { color: var(--ct-muted); }
+
+    .ct-sc-week-selector {
+      display: flex; gap: 8px; align-items: center;
+    }
+  `);
+
   // ═══════════════════════════════════════════════════════════════════════════
   // NAVBAR INJECTION SYSTEM
   // ═══════════════════════════════════════════════════════════════════════════
@@ -849,6 +924,9 @@
             <a href="#" data-ct-tool="returns">📦 Returns</a>
           </li>
           <li class="fp-sub-menu-list-item">
+            <a href="#" data-ct-tool="scorecard">📋 Scorecard</a>
+          </li>
+          <li class="fp-sub-menu-list-item">
             <a href="#" data-ct-tool="settings">⚙ Einstellungen</a>
           </li>
         </ul>
@@ -870,6 +948,7 @@
             case 'dvic-check': dvicCheck.toggle(); break;
             case 'working-hours': workingHoursDashboard.toggle(); break;
             case 'returns': returnsDashboard.toggle(); break;
+            case 'scorecard': scorecardDashboard.toggle(); break;
             case 'settings': openSettings(); break;
           }
         } catch (ex) {
@@ -4663,6 +4742,786 @@
   };
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // MODULE: SCORECARD
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Scorecard Module — Weekly DA quality scorecard with Total Score calculation.
+   *
+   * Data source: GET /performance/api/v1/getData
+   *   ?dataSetId=da_dsp_station_weekly_quality
+   *   &dsp={DSP}&from={YYYY-Www}&station={STATION}&timeFrame=Weekly&to={YYYY-Www}
+   *
+   * The API returns JSON where tableData.da_dsp_station_weekly_quality.rows
+   * is an array of JSON strings. Each string must be JSON.parse'd to yield a
+   * record with fields like: delivered, dcr_metric, dnr_dpmo, pod_metric,
+   * cc_metric, ce_metric, cdf_dpmo, lor_dpmo, week, year, station_code, etc.
+   *
+   * Total Score calculation is ported directly from scorecard_component.tsx
+   * without modification:
+   *   1. Base formula with weighted KPIs
+   *   2. Perfect-score override (all metrics at optimal values)
+   *   3. "Poor" KPI counting and penalty system
+   *
+   * Configurable via:
+   *   - Settings dialog: default station, DSP
+   *   - Dashboard UI: station, DSP, week range inputs
+   *   - Feature flag: config.features.scorecard
+   *
+   * To test locally:
+   *   1. Enable the Scorecard feature in Settings
+   *   2. Open the Scorecard from the nav menu or Tampermonkey menu
+   *   3. Set the desired station, DSP, and week range
+   *   4. Click "Fetch" to load data
+   *
+   * Caveats:
+   *   - The API field names use underscores (e.g. dcr_metric) vs the TSX
+   *     component which uses camelCase (e.g. dcr). The mapping is handled
+   *     in scParseRow().
+   *   - Week format is ISO: YYYY-Www (e.g. 2026-W10)
+   *   - LOR DPMO is displayed but not used in the Total Score calculation,
+   *     matching the TSX component behaviour.
+   *
+   * Pure helper functions are exposed via scorecardDashboard._helpers for testing.
+   */
+
+  /**
+   * Convert a string value to a decimal number.
+   * Mirrors convertToDecimal from scorecard_component.tsx.
+   * @param {string} value - The string value to parse
+   * @returns {number} Parsed number or NaN
+   */
+  function scConvertToDecimal(value) {
+    if (value === undefined || value === null) return NaN;
+    const s = String(value).trim();
+    if (s === '-' || s === '') return NaN;
+    const number = parseFloat(s.replace(',', '.'));
+    return isNaN(number) ? NaN : number;
+  }
+
+  /**
+   * Parse a raw API row (JSON string or object) into a normalised scorecard record.
+   *
+   * The API returns fields like dcr_metric (0–1 ratio), pod_metric (0–1 ratio),
+   * cc_metric (0–1 ratio), cdf_dpmo (integer), dnr_dpmo (integer),
+   * ce_metric (count), lor_dpmo (integer), delivered (integer).
+   *
+   * We normalise these to the format expected by the score calculator:
+   *   dcr, pod, cc    → percentage strings (e.g. "98.5")
+   *   dnrDpmo, lorDpmo, cdfDpmo, ce → raw number strings
+   *   delivered       → raw number string
+   *   transporterId   → composite key from API
+   *   week, year, stationCode, dspCode → metadata
+   *
+   * @param {string|Object} jsonStr - Raw JSON string or pre-parsed object
+   * @returns {Object} Normalised record
+   */
+  function scParseRow(jsonStr) {
+    const raw = typeof jsonStr === 'string' ? JSON.parse(jsonStr) : jsonStr;
+    const out = {};
+    // Trim whitespace from all keys (matches dpParseRow pattern)
+    for (const [k, v] of Object.entries(raw)) {
+      out[k.trim()] = v;
+    }
+
+    // Map API fields to scorecard fields
+    // dcr_metric, pod_metric, cc_metric are 0–1 ratios → convert to percentage strings
+    const dcrRatio = out.dcr_metric !== undefined ? Number(out.dcr_metric) : NaN;
+    const podRatio = out.pod_metric !== undefined ? Number(out.pod_metric) : NaN;
+    const ccRatio  = out.cc_metric  !== undefined ? Number(out.cc_metric)  : NaN;
+
+    return {
+      // Scorecard input fields (as strings, matching TSX component expectations)
+      transporterId: out.country_program_providerid_stationcode || out.dsp_code || '',
+      delivered:     String(out.delivered || '0'),
+      dcr:           isNaN(dcrRatio) ? '-' : (dcrRatio * 100).toFixed(2),
+      dnrDpmo:       String(out.dnr_dpmo ?? '0'),
+      lorDpmo:       String(out.lor_dpmo ?? '0'),
+      pod:           isNaN(podRatio) ? '-' : (podRatio * 100).toFixed(2),
+      cc:            isNaN(ccRatio) ? '-' : (ccRatio * 100).toFixed(2),
+      ce:            String(out.ce_metric ?? '0'),
+      cdfDpmo:       String(out.cdf_dpmo ?? '0'),
+      // Metadata
+      daName:        out.da_name || '',
+      week:          out.week || '',
+      year:          out.year || '',
+      stationCode:   out.station_code || '',
+      dspCode:       out.dsp_code || '',
+      dataDate:      out.data_date || '',
+      country:       out.country || '',
+      program:       out.program || '',
+      region:        out.region || '',
+      lastUpdated:   out.last_updated_time || '',
+      // Preserve raw for debugging
+      _raw: out,
+    };
+  }
+
+  /**
+   * Calculate Total Score for a single scorecard row.
+   * This is an EXACT port of the calculateScores logic from scorecard_component.tsx.
+   *
+   * The calculation:
+   *   1. Normalise inputs (dcr, pod, cc as 0–1 ratios; dnrDpmo, ce, cdfDpmo as numbers)
+   *   2. Apply weighted formula:
+   *        totalScore = (132.88 * dcr)
+   *                   + (10 * max(0, 1 - cdfDpmo/10000))
+   *                   - (0.0024 * dnrDpmo)
+   *                   - (8.54 * ce)
+   *                   + (10 * pod)
+   *                   + (4 * cc)
+   *                   + (0.00045 * delivered)
+   *                   - 60.88
+   *        Clamped to [0, 100]
+   *   3. Perfect score override: if all KPIs at optimal → 100
+   *   4. Poor KPI penalty system:
+   *        - Count KPIs in "poor" range
+   *        - If ≥2 poor: cap at 70 - penalty
+   *        - If 1 poor: cap at 85 - penalty
+   *        - Penalty = min(3, severitySum) based on how far each KPI is from threshold
+   *   5. Status: Poor (<40), Fair (<70), Great (<85), Fantastic (<93), Fantastic Plus (≥93)
+   *
+   * @param {Object} row - Normalised row from scParseRow
+   * @returns {Object} Calculated result with totalScore, status, and formatted values
+   */
+  function scCalculateScore(row) {
+    const dcr = (scConvertToDecimal(row.dcr === '-' ? '100' : row.dcr) || 0) / 100;
+    const dnrDpmo = parseFloat(row.dnrDpmo) || 0;
+    const lorDpmo = parseFloat(row.lorDpmo) || 0;
+    const pod = (scConvertToDecimal(row.pod === '-' ? '100' : row.pod) || 0) / 100;
+    const cc = (scConvertToDecimal(row.cc === '-' ? '100' : row.cc) || 0) / 100;
+    const ce = parseFloat(row.ce) || 0;
+    const cdfDpmo = parseFloat(row.cdfDpmo) || 0;
+    const delivered = parseFloat(row.delivered) || 0;
+
+    // Step 1: Base formula (exactly matching scorecard_component.tsx lines 335-344)
+    let totalScore = Math.max(Math.min(
+      (132.88 * dcr) +
+      (10 * Math.max(0, 1 - (cdfDpmo / 10000))) -
+      (0.0024 * dnrDpmo) -
+      (8.54 * ce) +
+      (10 * pod) +
+      (4 * cc) +
+      (0.00045 * delivered) -
+      60.88,
+      100), 0);
+
+    // Step 2: Perfect score override (line 347)
+    if (dcr === 1 && pod === 1 && cc === 1 && cdfDpmo === 0 && ce === 0 && dnrDpmo === 0 && lorDpmo === 0) {
+      totalScore = 100;
+    } else {
+      // Step 3: Count "poor" KPIs (lines 351-357)
+      let poorCount = 0;
+      if ((dcr * 100) < 97) poorCount++;
+      if (dnrDpmo >= 1500) poorCount++;
+      if ((pod * 100) < 94) poorCount++;
+      if ((cc * 100) < 70) poorCount++;
+      if (ce !== 0) poorCount++;
+      if (cdfDpmo >= 8000) poorCount++;
+
+      // Step 4: Apply penalty (lines 360-382)
+      if (poorCount >= 2) {
+        let severitySum = 0;
+        if ((dcr * 100) < 97) severitySum += (97 - dcr * 100) / 5;
+        if (dnrDpmo >= 1500) severitySum += (dnrDpmo - 1500) / 1000;
+        if ((pod * 100) < 94) severitySum += (94 - pod * 100) / 10;
+        if ((cc * 100) < 70) severitySum += (70 - cc * 100) / 50;
+        if (ce !== 0) severitySum += ce * 1;
+        if (cdfDpmo >= 8000) severitySum += (cdfDpmo - 8000) / 2000;
+
+        const penalty = Math.min(3, severitySum);
+        totalScore = Math.min(totalScore, 70 - penalty);
+      } else if (poorCount === 1) {
+        let severitySum = 0;
+        if ((dcr * 100) < 97) severitySum += (97 - dcr * 100) / 5;
+        if (dnrDpmo >= 1500) severitySum += (dnrDpmo - 1500) / 1000;
+        if ((pod * 100) < 94) severitySum += (94 - pod * 100) / 10;
+        if ((cc * 100) < 70) severitySum += (70 - cc * 100) / 50;
+        if (ce !== 0) severitySum += ce * 1;
+        if (cdfDpmo >= 8000) severitySum += (cdfDpmo - 8000) / 2000;
+
+        const penalty = Math.min(3, severitySum);
+        totalScore = Math.min(totalScore, 85 - penalty);
+      }
+    }
+
+    const roundedScore = parseFloat(totalScore.toFixed(2));
+
+    // Step 5: Status classification (lines 389-392)
+    const status = roundedScore < 40.00 ? 'Poor' :
+      roundedScore < 70.00 ? 'Fair' :
+        roundedScore < 85.00 ? 'Great' :
+          roundedScore < 93.00 ? 'Fantastic' : 'Fantastic Plus';
+
+    return {
+      transporterId: row.transporterId,
+      delivered: row.delivered,
+      dcr: (dcr * 100).toFixed(2),
+      dnrDpmo: dnrDpmo.toFixed(2),
+      lorDpmo: lorDpmo.toFixed(2),
+      pod: (pod * 100).toFixed(2),
+      cc: (cc * 100).toFixed(2),
+      ce: ce.toFixed(2),
+      cdfDpmo: cdfDpmo.toFixed(2),
+      status,
+      totalScore: roundedScore,
+      // Metadata passthrough
+      daName: row.daName,
+      week: row.week,
+      year: row.year,
+      stationCode: row.stationCode,
+      dspCode: row.dspCode,
+      dataDate: row.dataDate,
+      lastUpdated: row.lastUpdated,
+      originalData: {
+        dcr: row.dcr,
+        dnrDpmo: row.dnrDpmo,
+        lorDpmo: row.lorDpmo,
+        pod: row.pod,
+        cc: row.cc,
+        ce: row.ce,
+        cdfDpmo: row.cdfDpmo,
+      }
+    };
+  }
+
+  /**
+   * Return the CSS class suffix for a KPI colour.
+   * Mirrors getColor() from scorecard_component.tsx.
+   * @param {number} value
+   * @param {string} type - One of: DCR, DNRDPMO, LORDPMO, POD, CC, CE, CDFDPMO
+   * @returns {string} 'poor'|'fair'|'great'|'fantastic'
+   */
+  function scKpiClass(value, type) {
+    switch (type) {
+      case 'DCR':
+        return value < 97 ? 'poor' : value < 98.5 ? 'fair' : value < 99.5 ? 'great' : 'fantastic';
+      case 'DNRDPMO':
+      case 'LORDPMO':
+        return value < 1100 ? 'fantastic' : value < 1300 ? 'great' : value < 1500 ? 'fair' : 'poor';
+      case 'POD':
+        return value < 94 ? 'poor' : value < 95.5 ? 'fair' : value < 97 ? 'great' : 'fantastic';
+      case 'CC':
+        return value < 70 ? 'poor' : value < 95 ? 'fair' : value < 98.5 ? 'great' : 'fantastic';
+      case 'CE':
+        return value === 0 ? 'fantastic' : 'poor';
+      case 'CDFDPMO':
+        return value > 5460 ? 'poor' : value > 4450 ? 'fair' : value > 3680 ? 'great' : 'fantastic';
+      default:
+        return '';
+    }
+  }
+
+  /**
+   * Return CSS class suffix for a status string.
+   * @param {string} status
+   * @returns {string}
+   */
+  function scStatusClass(status) {
+    switch (status) {
+      case 'Poor': return 'poor';
+      case 'Fair': return 'fair';
+      case 'Great': return 'great';
+      case 'Fantastic':
+      case 'Fantastic Plus': return 'fantastic';
+      default: return '';
+    }
+  }
+
+  /**
+   * Parse the full API response for scorecard data.
+   * Extracts rows from tableData.da_dsp_station_weekly_quality.rows,
+   * parses each JSON string, and returns normalised scorecard records.
+   *
+   * @param {Object} json - Raw API response
+   * @returns {Object[]} Array of parsed row objects (empty array on error/missing data)
+   */
+  function scParseApiResponse(json) {
+    try {
+      const rows = json?.tableData?.da_dsp_station_weekly_quality?.rows;
+      if (!Array.isArray(rows) || rows.length === 0) return [];
+      const parsed = [];
+      for (let i = 0; i < rows.length; i++) {
+        try {
+          parsed.push(scParseRow(rows[i]));
+        } catch (e) {
+          err('Scorecard: failed to parse row', i, e);
+          // Skip malformed entries gracefully
+        }
+      }
+      return parsed;
+    } catch (e) {
+      err('scParseApiResponse error:', e);
+      return [];
+    }
+  }
+
+  /**
+   * Validate a single week input.
+   * @param {string} week - ISO week string (YYYY-Www)
+   * @returns {string|null} Error message or null if valid
+   */
+  function scValidateWeek(week) {
+    if (!week) return 'Week is required.';
+    const weekRegex = /^\d{4}-W\d{2}$/;
+    if (!weekRegex.test(week)) return 'Week format must be YYYY-Www (e.g. 2026-W12).';
+    return null;
+  }
+
+  /**
+   * Get current ISO week string (YYYY-Www).
+   * @returns {string}
+   */
+  function scCurrentWeek() {
+    const now = new Date();
+    const d = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+    const dayNum = d.getUTCDay() || 7;
+    d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+    const weekNo = Math.ceil(((d - yearStart) / 86400000 + 1) / 7);
+    return `${d.getUTCFullYear()}-W${String(weekNo).padStart(2, '0')}`;
+  }
+
+  /**
+   * Get ISO week string for N weeks ago.
+   * @param {number} n
+   * @returns {string}
+   */
+  function scWeeksAgo(n) {
+    const now = new Date();
+    now.setDate(now.getDate() - (n * 7));
+    const d = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+    const dayNum = d.getUTCDay() || 7;
+    d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+    const weekNo = Math.ceil(((d - yearStart) / 86400000 + 1) / 7);
+    return `${d.getUTCFullYear()}-W${String(weekNo).padStart(2, '0')}`;
+  }
+
+  const scorecardDashboard = {
+    _overlayEl: null,
+    _active: false,
+    _cache: new Map(),
+    _calculatedData: [],
+    _currentSort: { field: 'totalScore', dir: 'desc' },
+    _currentPage: 0,
+    _pageSize: 50,
+
+    // Expose pure helpers for unit testing
+    _helpers: {
+      scConvertToDecimal,
+      scParseRow,
+      scCalculateScore,
+      scKpiClass,
+      scStatusClass,
+      scParseApiResponse,
+      scValidateWeek,
+      scCurrentWeek,
+      scWeeksAgo,
+    },
+
+    // ── Lifecycle ────────────────────────────────────────────
+    init() {
+      if (this._overlayEl) return;
+
+      const curWeek  = scCurrentWeek();
+      const station  = esc(config.deliveryPerfStation || 'XYZ1');
+      const dsp      = esc(config.deliveryPerfDsp || 'TEST');
+
+      const overlay = document.createElement('div');
+      overlay.id = 'ct-sc-overlay';
+      overlay.className = 'ct-overlay';
+      overlay.setAttribute('role', 'dialog');
+      overlay.setAttribute('aria-modal', 'true');
+      overlay.setAttribute('aria-label', 'Scorecard Dashboard');
+      overlay.innerHTML = `
+        <div class="ct-sc-panel">
+          <h2>📋 Scorecard</h2>
+          <div class="ct-controls">
+            <label for="ct-sc-week">Week:</label>
+            <input type="text" id="ct-sc-week" class="ct-input" value="${curWeek}"
+                   placeholder="YYYY-Www" maxlength="8" style="width:100px"
+                   aria-label="Week (ISO format, e.g. 2026-W12)">
+            <label for="ct-sc-station">Station:</label>
+            <input type="text" id="ct-sc-station" class="ct-input"
+                   value="${station}" maxlength="8" style="width:80px"
+                   aria-label="Station code">
+            <label for="ct-sc-dsp">DSP:</label>
+            <input type="text" id="ct-sc-dsp" class="ct-input"
+                   value="${dsp}" maxlength="8" style="width:70px"
+                   aria-label="DSP code">
+            <button class="ct-btn ct-btn--accent" id="ct-sc-go"
+                    aria-label="Fetch scorecard data">🔍 Fetch</button>
+            <button class="ct-btn ct-btn--primary" id="ct-sc-export"
+                    aria-label="Export as CSV">📋 CSV Export</button>
+            <button class="ct-btn ct-btn--close" id="ct-sc-close"
+                    aria-label="Close Scorecard">✕ Close</button>
+          </div>
+          <div id="ct-sc-status" class="ct-status" role="status" aria-live="polite"></div>
+          <div id="ct-sc-body"></div>
+        </div>
+      `;
+
+      document.body.appendChild(overlay);
+      this._overlayEl = overlay;
+
+      // Backdrop click to close
+      overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) this.hide();
+      });
+
+      document.getElementById('ct-sc-close').addEventListener('click', () => this.hide());
+      document.getElementById('ct-sc-go').addEventListener('click', () => this._triggerFetch());
+      document.getElementById('ct-sc-export').addEventListener('click', () => this._exportCSV());
+
+      // Keyboard: Escape to close
+      overlay.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') this.hide();
+      });
+
+      onDispose(() => this.dispose());
+      log('Scorecard Dashboard initialized');
+    },
+
+    dispose() {
+      if (this._overlayEl) { this._overlayEl.remove(); this._overlayEl = null; }
+      this._active = false;
+      this._cache.clear();
+      this._calculatedData = [];
+    },
+
+    toggle() {
+      if (!config.features.scorecard) {
+        alert('Scorecard ist deaktiviert. Bitte in den Einstellungen aktivieren.');
+        return;
+      }
+      this.init();
+      if (this._active) this.hide(); else this.show();
+    },
+
+    show() {
+      this.init();
+      this._overlayEl.classList.add('visible');
+      this._active = true;
+      document.getElementById('ct-sc-week').focus();
+    },
+
+    hide() {
+      if (this._overlayEl) this._overlayEl.classList.remove('visible');
+      this._active = false;
+    },
+
+    // ── API ──────────────────────────────────────────────────
+    /**
+     * Build the API URL for scorecard data.
+     * Example: /performance/api/v1/getData
+     *   ?dataSetId=da_dsp_station_weekly_quality
+     *   &dsp=TEST&from=2026-W10&station=XYZ1&timeFrame=Weekly&to=2026-W11
+     *
+     * To configure from environment/config: replace the base URL below with
+     * a config value, e.g.:
+     *   const baseUrl = config.scorecardApiUrl || 'https://logistics.amazon.de/performance/api/v1/getData';
+     */
+    _buildUrl(week, station, dsp) {
+      // dataSetId can be made configurable: config.scorecardDataSetId || '...'
+      const dataSetId = 'da_dsp_station_weekly_quality';
+      // Single week: API uses from=week&to=week
+      return (
+        'https://logistics.amazon.de/performance/api/v1/getData' +
+        `?dataSetId=${encodeURIComponent(dataSetId)}` +
+        `&dsp=${encodeURIComponent(dsp)}` +
+        `&from=${encodeURIComponent(week)}` +
+        `&station=${encodeURIComponent(station)}` +
+        `&timeFrame=Weekly` +
+        `&to=${encodeURIComponent(week)}`
+      );
+    },
+
+    async _fetchData(week, station, dsp) {
+      const cacheKey = `sc|${week}|${station}|${dsp}`;
+      if (this._cache.has(cacheKey)) {
+        log('Scorecard cache hit:', cacheKey);
+        return this._cache.get(cacheKey);
+      }
+
+      const url = this._buildUrl(week, station, dsp);
+      const csrf = getCSRFToken();
+      const headers = { Accept: 'application/json' };
+      if (csrf) headers['anti-csrftoken-a2z'] = csrf;
+
+      const resp = await withRetry(async () => {
+        const r = await fetch(url, { method: 'GET', headers, credentials: 'include' });
+        if (!r.ok) throw new Error(`HTTP ${r.status}: ${r.statusText}`);
+        return r;
+      }, { retries: 2, baseMs: 800 });
+
+      const json = await resp.json();
+      this._cache.set(cacheKey, json);
+      // Evict oldest entry if cache grows large
+      if (this._cache.size > 50) {
+        const oldest = this._cache.keys().next().value;
+        this._cache.delete(oldest);
+      }
+      return json;
+    },
+
+    // ── Trigger ──────────────────────────────────────────────
+    async _triggerFetch() {
+      const week    = document.getElementById('ct-sc-week').value.trim();
+      const station = document.getElementById('ct-sc-station').value.trim().toUpperCase();
+      const dsp     = document.getElementById('ct-sc-dsp').value.trim().toUpperCase();
+
+      const validErr = scValidateWeek(week);
+      if (validErr) {
+        this._setStatus('⚠️ ' + validErr);
+        return;
+      }
+      if (!station) { this._setStatus('⚠️ Station code required.'); return; }
+      if (!dsp)     { this._setStatus('⚠️ DSP code required.'); return; }
+
+      this._setStatus('⏳ Loading…');
+      this._setBody('<div class="ct-sc-loading" role="status">Fetching scorecard data…</div>');
+
+      try {
+        const json = await this._fetchData(week, station, dsp);
+        const parsedRows = scParseApiResponse(json);
+
+        if (parsedRows.length === 0) {
+          this._setBody('<div class="ct-sc-empty">No data returned for the selected week. Verify station, DSP, and week parameters.</div>');
+          this._setStatus('⚠️ No records found.');
+          return;
+        }
+
+        // Calculate scores for all rows
+        const calculated = parsedRows.map((row) => {
+          try {
+            return scCalculateScore(row);
+          } catch (e) {
+            err('Scorecard: failed to calculate score for row:', row, e);
+            return null;
+          }
+        }).filter(Boolean);
+
+        if (calculated.length === 0) {
+          this._setBody('<div class="ct-sc-error">All rows failed score calculation. Check data format.</div>');
+          this._setStatus('❌ Calculation failed for all rows.');
+          return;
+        }
+
+        // Sort by totalScore descending (default)
+        calculated.sort((a, b) => b.totalScore - a.totalScore);
+        this._calculatedData = calculated;
+        this._currentPage = 0;
+        this._currentSort = { field: 'totalScore', dir: 'desc' };
+
+        this._renderAll();
+        this._setStatus(`✅ ${calculated.length} record(s) loaded — ${week}`);
+      } catch (e) {
+        err('Scorecard fetch failed:', e);
+        this._setBody(`<div class="ct-sc-error">❌ ${esc(e.message)}</div>`);
+        this._setStatus('❌ Failed to load data.');
+      }
+    },
+
+    // ── Status / body helpers ────────────────────────────────
+    _setStatus(msg) {
+      const el = document.getElementById('ct-sc-status');
+      if (el) el.textContent = msg;
+    },
+
+    _setBody(html) {
+      const el = document.getElementById('ct-sc-body');
+      if (el) el.innerHTML = html;
+    },
+
+    // ── Rendering ────────────────────────────────────────────
+    _renderAll() {
+      const data = this._calculatedData;
+      if (!data.length) return;
+
+      // Summary tiles
+      const avgScore = data.reduce((s, r) => s + r.totalScore, 0) / data.length;
+      const statusCounts = { Poor: 0, Fair: 0, Great: 0, Fantastic: 0, 'Fantastic Plus': 0 };
+      for (const r of data) {
+        statusCounts[r.status] = (statusCounts[r.status] || 0) + 1;
+      }
+
+      const tilesHtml = `
+        <div class="ct-sc-tiles" aria-label="Summary tiles">
+          <div class="ct-sc-tile">
+            <div class="ct-sc-tile-val">${data.length}</div>
+            <div class="ct-sc-tile-lbl">Total Records</div>
+          </div>
+          <div class="ct-sc-tile">
+            <div class="ct-sc-tile-val">${avgScore.toFixed(1)}</div>
+            <div class="ct-sc-tile-lbl">Avg Score</div>
+          </div>
+          <div class="ct-sc-tile ct-sc-tile--fantastic">
+            <div class="ct-sc-tile-val">${(statusCounts['Fantastic'] || 0) + (statusCounts['Fantastic Plus'] || 0)}</div>
+            <div class="ct-sc-tile-lbl">Fantastic(+)</div>
+          </div>
+          <div class="ct-sc-tile ct-sc-tile--great">
+            <div class="ct-sc-tile-val">${statusCounts['Great'] || 0}</div>
+            <div class="ct-sc-tile-lbl">Great</div>
+          </div>
+          <div class="ct-sc-tile ct-sc-tile--fair">
+            <div class="ct-sc-tile-val">${statusCounts['Fair'] || 0}</div>
+            <div class="ct-sc-tile-lbl">Fair</div>
+          </div>
+          <div class="ct-sc-tile ct-sc-tile--poor">
+            <div class="ct-sc-tile-val">${statusCounts['Poor'] || 0}</div>
+            <div class="ct-sc-tile-lbl">Poor</div>
+          </div>
+        </div>
+      `;
+
+      // Table
+      const start = this._currentPage * this._pageSize;
+      const end = Math.min(start + this._pageSize, data.length);
+      const pageData = data.slice(start, end);
+
+      const sortArrow = (field) => {
+        if (this._currentSort.field !== field) return '';
+        return this._currentSort.dir === 'asc' ? ' ▲' : ' ▼';
+      };
+
+      const rowsHtml = pageData.map((row, i) => {
+        const place = start + i + 1;
+        const sClass = scStatusClass(row.status);
+        return `<tr>
+          <td>${place}</td>
+          <td title="${esc(row.transporterId)}">${esc(row.daName || row.transporterId)}</td>
+          <td class="ct-sc-status--${sClass}">${esc(row.status)}</td>
+          <td><strong>${row.totalScore.toFixed(2)}</strong></td>
+          <td>${esc(Number(row.delivered).toLocaleString())}</td>
+          <td class="ct-sc-color--${scKpiClass(parseFloat(row.dcr), 'DCR')}">${row.dcr}%</td>
+          <td class="ct-sc-color--${scKpiClass(parseFloat(row.dnrDpmo), 'DNRDPMO')}">${parseInt(row.dnrDpmo, 10)}</td>
+          <td class="ct-sc-color--${scKpiClass(parseFloat(row.lorDpmo), 'LORDPMO')}">${parseInt(row.lorDpmo, 10)}</td>
+          <td class="ct-sc-color--${scKpiClass(parseFloat(row.pod), 'POD')}">${row.pod}%</td>
+          <td class="ct-sc-color--${scKpiClass(parseFloat(row.cc), 'CC')}">${row.cc}%</td>
+          <td class="ct-sc-color--${scKpiClass(parseFloat(row.ce), 'CE')}">${parseInt(row.ce, 10)}</td>
+          <td class="ct-sc-color--${scKpiClass(parseFloat(row.cdfDpmo), 'CDFDPMO')}">${parseInt(row.cdfDpmo, 10)}</td>
+        </tr>`;
+      }).join('');
+
+      const tableHtml = `
+        <div class="ct-sc-table-wrap">
+          <table class="ct-sc-table" aria-label="Scorecard results">
+            <thead><tr>
+              <th data-sort="place">#${sortArrow('place')}</th>
+              <th data-sort="daName">DA${sortArrow('daName')}</th>
+              <th data-sort="status">Status${sortArrow('status')}</th>
+              <th data-sort="totalScore">Total Score${sortArrow('totalScore')}</th>
+              <th data-sort="delivered">Delivered${sortArrow('delivered')}</th>
+              <th data-sort="dcr">DCR${sortArrow('dcr')}</th>
+              <th data-sort="dnrDpmo">DNR DPMO${sortArrow('dnrDpmo')}</th>
+              <th data-sort="lorDpmo">LOR DPMO${sortArrow('lorDpmo')}</th>
+              <th data-sort="pod">POD${sortArrow('pod')}</th>
+              <th data-sort="cc">CC${sortArrow('cc')}</th>
+              <th data-sort="ce">CE${sortArrow('ce')}</th>
+              <th data-sort="cdfDpmo">CDF DPMO${sortArrow('cdfDpmo')}</th>
+            </tr></thead>
+            <tbody>${rowsHtml}</tbody>
+          </table>
+        </div>
+      `;
+
+      // Pagination
+      const totalPages = Math.ceil(data.length / this._pageSize);
+      const paginationHtml = totalPages > 1 ? `
+        <div class="ct-sc-pagination">
+          <button class="ct-btn ct-btn--secondary ct-sc-page-prev"
+                  ${this._currentPage === 0 ? 'disabled' : ''}>◀ Prev</button>
+          <span class="ct-sc-page-info">Page ${this._currentPage + 1} of ${totalPages}</span>
+          <button class="ct-btn ct-btn--secondary ct-sc-page-next"
+                  ${this._currentPage >= totalPages - 1 ? 'disabled' : ''}>Next ▶</button>
+        </div>
+      ` : '';
+
+      this._setBody(tilesHtml + tableHtml + paginationHtml);
+
+      // Attach sort handlers
+      const ths = document.querySelectorAll('.ct-sc-table th[data-sort]');
+      for (const th of ths) {
+        th.addEventListener('click', () => {
+          const field = th.getAttribute('data-sort');
+          if (field === 'place') return; // place is just row number
+          if (this._currentSort.field === field) {
+            this._currentSort.dir = this._currentSort.dir === 'asc' ? 'desc' : 'asc';
+          } else {
+            this._currentSort = { field, dir: 'desc' };
+          }
+          this._sortData();
+          this._currentPage = 0;
+          this._renderAll();
+        });
+      }
+
+      // Attach pagination handlers
+      const prevBtn = document.querySelector('.ct-sc-page-prev');
+      const nextBtn = document.querySelector('.ct-sc-page-next');
+      if (prevBtn) prevBtn.addEventListener('click', () => { this._currentPage--; this._renderAll(); });
+      if (nextBtn) nextBtn.addEventListener('click', () => { this._currentPage++; this._renderAll(); });
+    },
+
+    _sortData() {
+      const { field, dir } = this._currentSort;
+      const mult = dir === 'asc' ? 1 : -1;
+
+      this._calculatedData.sort((a, b) => {
+        let va = a[field], vb = b[field];
+        // Try numeric comparison
+        const na = parseFloat(va), nb = parseFloat(vb);
+        if (!isNaN(na) && !isNaN(nb)) return (na - nb) * mult;
+        // String comparison fallback
+        va = String(va || ''); vb = String(vb || '');
+        return va.localeCompare(vb) * mult;
+      });
+    },
+
+    // ── CSV Export ────────────────────────────────────────────
+    _exportCSV() {
+      if (!this._calculatedData.length) {
+        this._setStatus('⚠️ No data to export. Fetch data first.');
+        return;
+      }
+
+      const headers = ['Place', 'DA', 'Status', 'Total Score', 'Delivered',
+        'DCR', 'DNR DPMO', 'LOR DPMO', 'POD', 'CC', 'CE', 'CDF DPMO',
+        'Station', 'DSP'];
+
+      const csvRows = [headers.join(';')];
+      this._calculatedData.forEach((row, i) => {
+        csvRows.push([
+          i + 1,
+          row.daName || row.transporterId,
+          row.status,
+          row.totalScore.toFixed(2),
+          row.delivered,
+          row.dcr,
+          parseInt(row.dnrDpmo, 10),
+          parseInt(row.lorDpmo, 10),
+          row.pod,
+          row.cc,
+          parseInt(row.ce, 10),
+          parseInt(row.cdfDpmo, 10),
+          row.stationCode,
+          row.dspCode,
+        ].join(';'));
+      });
+
+      const blob = new Blob(['\uFEFF' + csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `scorecard_${document.getElementById('ct-sc-week')?.value || 'data'}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      this._setStatus('✅ CSV exported.');
+    },
+  };
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // SETTINGS DIALOG
   // ═══════════════════════════════════════════════════════════════════════════
 
@@ -4700,6 +5559,7 @@
         ${toggleHTML('ct-set-dvic', 'DVIC Check', config.features.dvicCheck)}
         ${toggleHTML('ct-set-whd',  'Working Hours Dashboard', config.features.workingHours)}
         ${toggleHTML('ct-set-ret',  'Returns Dashboard', config.features.returnsDashboard)}
+        ${toggleHTML('ct-set-sc',  'Scorecard', config.features.scorecard)}
         ${toggleHTML('ct-set-dev',  'Dev-Mode (ausführliches Logging)', config.dev)}
 
         <div class="ct-settings-row" style="flex-direction: column; align-items: stretch; gap: 6px;">
@@ -4742,6 +5602,7 @@
       config.features.dvicCheck     = document.getElementById('ct-set-dvic').checked;
       config.features.workingHours  = document.getElementById('ct-set-whd').checked;
       config.features.returnsDashboard = document.getElementById('ct-set-ret').checked;
+      config.features.scorecard = document.getElementById('ct-set-sc').checked;
       config.dev = document.getElementById('ct-set-dev').checked;
       config.deliveryPerfStation = document.getElementById('ct-set-dp-station').value.trim().toUpperCase() || 'XYZ1';
       config.deliveryPerfDsp     = document.getElementById('ct-set-dp-dsp').value.trim().toUpperCase() || 'TEST';
@@ -4842,6 +5703,7 @@
   GM_registerMenuCommand('🚛 DVIC Check', () => dvicCheck.toggle());
   GM_registerMenuCommand('⏱ Working Hours', () => workingHoursDashboard.toggle());
   GM_registerMenuCommand('📦 Returns Dashboard', () => returnsDashboard.toggle());
+  GM_registerMenuCommand('📋 Scorecard', () => scorecardDashboard.toggle());
   GM_registerMenuCommand('⚙ Einstellungen', openSettings);
   GM_registerMenuCommand('⏸ Skript pausieren', () => {
     config.enabled = false;
