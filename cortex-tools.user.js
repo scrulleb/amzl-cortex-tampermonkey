@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Cortex Tools
 // @namespace    https://github.com/jurib/amzl-cortex-tampermonkey
-// @version      1.2.0
+// @version      1.2.1
 // @description  Produktivitäts-Tools für logistics.amazon.de (Cortex)
 // @author       Juri B.
 // @match        https://logistics.amazon.de/*
@@ -589,6 +589,12 @@
       cursor: pointer; user-select: none; position: relative;
     }
     .ct-whd-table th[data-sort]:hover { background: #37475a; }
+
+    /* Driver column: fixed width, center */
+    .ct-whd-table th[data-sort="driverName"],
+    .ct-whd-table td.ct-whd-driver {
+      min-width: 180px; width: 180px; text-align: center;
+    }
     .ct-whd-sort-icon {
       font-size: 10px; margin-left: 3px; opacity: 0.7;
     }
@@ -3117,8 +3123,10 @@
     const tta = item.transporterTimeAttributes || {};
     return {
       itineraryId:             item.itineraryId ?? null,
+      transporterId:           item.transporterId ?? null,
       routeCode:               item.routeCode ?? null,
       serviceTypeName:         item.serviceTypeName ?? null,
+      driverName:              null, // enriched after roster lookup
       blockDurationInMinutes:  item.blockDurationInMinutes ?? null,
       waveStartTime:           whdNormalizeEpochMs(item.waveStartTime),
       itineraryStartTime:      whdNormalizeEpochMs(item.itineraryStartTime),
@@ -3151,6 +3159,7 @@
   const WHD_COLUMNS = [
     { key: 'routeCode',              label: 'Route Code',       type: 'string'   },
     { key: 'serviceTypeName',        label: 'Service Type',     type: 'string'   },
+    { key: 'driverName',             label: 'Driver',           type: 'string'   },
     { key: 'blockDurationInMinutes', label: 'Block (min)',      type: 'integer'  },
     { key: 'waveStartTime',          label: 'Wave Start',       type: 'time'     },
     { key: 'itineraryStartTime',     label: 'Itin. Start',      type: 'time'     },
@@ -3166,6 +3175,7 @@
     { key: 'itineraryId',            label: 'Itinerary ID',      format: 'string'   },
     { key: 'routeCode',              label: 'Route Code',        format: 'string'   },
     { key: 'serviceTypeName',        label: 'Service Type',      format: 'string'   },
+    { key: 'driverName',             label: 'Driver',            format: 'string'   },
     { key: 'blockDurationInMinutes', label: 'Block Duration',    format: 'integer', suffix: ' min' },
     { key: 'waveStartTime',          label: 'Wave Start',        format: 'time'     },
     { key: 'itineraryStartTime',     label: 'Itin. Start',       format: 'time'     },
@@ -3186,6 +3196,7 @@
     _sort: { column: 'routeCode', direction: 'asc' },
     _page: 1,
     _pageSize: 50,
+    _driverCache: new Map(), // transporterId → driverName, persists across opens
 
     // ── Lifecycle ─────────────────────────────────────────
     init() {
@@ -3441,6 +3452,86 @@
       }
     },
 
+    // ── Driver Name Resolution ──────────────────────────────
+    /**
+     * Batch-resolve transporterIds to driver names via the roster API.
+     * Uses a persistent Map cache (_driverCache) to avoid redundant lookups.
+     * The roster API maps driverPersonId → driverName; transporterId uses
+     * the same ID space as driverPersonId (Amazon associate IDs).
+     *
+     * Strategy: single roster fetch for the query date range, extracting
+     * all driverPersonId → driverName pairs into the cache. Then each
+     * row's transporterId is looked up in the cache.
+     *
+     * @param {Object[]} rows - extracted row objects with transporterId
+     * @param {string} date - query date (YYYY-MM-DD)
+     * @param {string} serviceAreaId - service area UUID
+     */
+    async _resolveDriverNames(rows, date, serviceAreaId) {
+      // Collect unique transporterIds that are not yet cached
+      const allIds = [...new Set(
+        rows.map((r) => r.transporterId).filter((id) => id != null)
+      )];
+      const uncached = allIds.filter((id) => !this._driverCache.has(id));
+
+      if (uncached.length > 0) {
+        try {
+          // Fetch roster for ±7 days around the query date to cover shift assignments
+          const queryDate = new Date(date + 'T00:00:00');
+          const fromDate = new Date(queryDate);
+          fromDate.setDate(fromDate.getDate() - 7);
+          const toDate = new Date(queryDate);
+          toDate.setDate(toDate.getDate() + 1);
+
+          const fromStr = fromDate.toISOString().split('T')[0];
+          const toStr = toDate.toISOString().split('T')[0];
+
+          const url =
+            `https://logistics.amazon.de/scheduling/home/api/v2/rosters` +
+            `?fromDate=${fromStr}&toDate=${toStr}&serviceAreaId=${serviceAreaId}`;
+
+          const csrf = getCSRFToken();
+          const headers = { Accept: 'application/json' };
+          if (csrf) headers['anti-csrftoken-a2z'] = csrf;
+
+          const resp = await fetch(url, { method: 'GET', headers, credentials: 'include' });
+          if (resp.ok) {
+            const json = await resp.json();
+            const roster = Array.isArray(json) ? json : json?.data || json?.rosters || [];
+
+            const processEntries = (entries) => {
+              for (const entry of entries) {
+                if (entry.driverPersonId && entry.driverName) {
+                  this._driverCache.set(
+                    String(entry.driverPersonId),
+                    entry.driverName
+                  );
+                }
+              }
+            };
+
+            if (Array.isArray(roster)) {
+              processEntries(roster);
+            } else if (typeof roster === 'object') {
+              for (const val of Object.values(roster)) {
+                if (Array.isArray(val)) processEntries(val);
+              }
+            }
+            log(`[WHD] Roster loaded: ${this._driverCache.size} driver names cached`);
+          }
+        } catch (e) {
+          log('[WHD] Roster lookup failed (non-fatal):', e);
+        }
+      }
+
+      // Enrich each row: transporterId → driverName via cache
+      for (const row of rows) {
+        if (row.transporterId) {
+          row.driverName = this._driverCache.get(row.transporterId) || null;
+        }
+      }
+    },
+
     // ── Data Fetching ─────────────────────────────────────
     async _fetchData() {
       const date = document.getElementById('ct-whd-date')?.value;
@@ -3495,13 +3586,22 @@
         }
 
         this._data = summaries.map(whdExtractRow);
+
+        // Resolve driver names via roster API (single batch call)
+        this._setStatus(`⏳ ${this._data.length} Itineraries geladen, lade Fahrernamen…`);
+        await this._resolveDriverNames(this._data, date, serviceAreaId);
+
         this._page = 1;
         this._sort = { column: 'routeCode', direction: 'asc' };
         this._renderTable();
 
         const stationCode = this._serviceAreas
           .find((sa) => sa.serviceAreaId === serviceAreaId)?.stationCode || serviceAreaId;
-        this._setStatus(`✅ ${this._data.length} Itineraries geladen — ${date} / ${stationCode}`);
+        const resolvedCount = this._data.filter((r) => r.driverName !== null).length;
+        this._setStatus(
+          `✅ ${this._data.length} Itineraries geladen — ${date} / ${stationCode}` +
+          ` | ${resolvedCount} Fahrer zugeordnet`
+        );
       } catch (e) {
         err('WHD fetch failed:', e);
         this._data = [];
@@ -3547,6 +3647,13 @@
       const trHtml = slice.map((row) => {
         const cells = WHD_COLUMNS.map((h) => {
           const val = row[h.key];
+          // Driver column: show "Unassigned" for null, apply special CSS class
+          if (h.key === 'driverName') {
+            if (val === null || val === undefined) {
+              return '<td class="ct-whd-driver ct-nodata">Unassigned</td>';
+            }
+            return `<td class="ct-whd-driver">${esc(String(val))}</td>`;
+          }
           if (val === null || val === undefined) {
             return '<td class="ct-nodata">—</td>';
           }
