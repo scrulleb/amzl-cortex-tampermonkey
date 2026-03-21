@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Cortex Tools
 // @namespace    https://github.com/jurib/amzl-cortex-tampermonkey
-// @version      1.3.0
+// @version      1.3.1
 // @description  Produktivitäts-Tools für logistics.amazon.de (Cortex)
 // @author       Juri B.
 // @match        https://logistics.amazon.de/*
@@ -153,6 +153,160 @@
   function todayStr() {
     return new Date().toISOString().split('T')[0];
   }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // CENTRALIZED SERVICE AREA & DSP CONFIGURATION
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Centralized configuration layer that auto-detects DSP, station, and
+   * service areas from the user's company profile. Values are loaded once
+   * and remain immutable for the session.
+   *
+   * Service areas come from:
+   *   GET /account-management/data/get-company-service-areas
+   *   → { success: true, data: [{ serviceAreaId, stationCode }] }
+   *
+   * DSP code is inferred from the company details page or performance API.
+   */
+  const companyConfig = {
+    _loaded: false,
+    _loading: null,   // Promise while loading
+    _serviceAreas: [], // Array of { serviceAreaId, stationCode }
+    _dspCode: null,    // Auto-detected DSP code (immutable after detection)
+    _defaultStation: null,
+    _defaultServiceAreaId: null,
+
+    /**
+     * Load service areas and auto-detect DSP. Returns a promise that
+     * resolves when loading is complete. Safe to call multiple times —
+     * subsequent calls return the same promise.
+     */
+    async load() {
+      if (this._loaded) return;
+      if (this._loading) return this._loading;
+
+      this._loading = this._doLoad();
+      await this._loading;
+      this._loaded = true;
+      this._loading = null;
+    },
+
+    async _doLoad() {
+      // 1. Load service areas
+      try {
+        const resp = await fetch(
+          'https://logistics.amazon.de/account-management/data/get-company-service-areas',
+          { credentials: 'include' }
+        );
+        const json = await resp.json();
+        if (json.success && Array.isArray(json.data) && json.data.length > 0) {
+          this._serviceAreas = json.data;
+          // Use first service area as default
+          this._defaultServiceAreaId = json.data[0].serviceAreaId;
+          this._defaultStation = json.data[0].stationCode;
+          log('Loaded', json.data.length, 'service areas');
+        }
+      } catch (e) {
+        err('Failed to load service areas:', e);
+      }
+
+      // 2. Auto-detect DSP code from company details
+      try {
+        const resp = await fetch(
+          'https://logistics.amazon.de/account-management/data/get-company-details',
+          { credentials: 'include' }
+        );
+        const json = await resp.json();
+        // The company details response contains the DSP short code
+        // Try multiple possible paths in the response
+        const dsp = json?.data?.dspShortCode
+                 || json?.data?.companyShortCode
+                 || json?.data?.shortCode
+                 || json?.dspShortCode
+                 || null;
+        if (dsp) {
+          this._dspCode = String(dsp).toUpperCase();
+          log('Auto-detected DSP code:', this._dspCode);
+        }
+      } catch (e) {
+        log('Company details not available, will detect DSP from performance data');
+      }
+
+      // 3. Fallback: if DSP not detected, try extracting from page content
+      if (!this._dspCode) {
+        try {
+          const navEl = document.querySelector('[data-testid="company-name"], .company-name, .dsp-name');
+          if (navEl) {
+            const text = navEl.textContent.trim();
+            if (text && text.length <= 10) {
+              this._dspCode = text.toUpperCase();
+              log('DSP code from page element:', this._dspCode);
+            }
+          }
+        } catch { /* ignore */ }
+      }
+
+      // 4. Final fallback: use the saved config value
+      if (!this._dspCode) {
+        this._dspCode = config.deliveryPerfDsp || DEFAULTS.deliveryPerfDsp;
+        log('Using saved DSP code:', this._dspCode);
+      }
+      if (!this._defaultStation) {
+        this._defaultStation = config.deliveryPerfStation || DEFAULTS.deliveryPerfStation;
+      }
+      if (!this._defaultServiceAreaId) {
+        this._defaultServiceAreaId = config.serviceAreaId || DEFAULTS.serviceAreaId;
+      }
+    },
+
+    /** Get all loaded service areas */
+    getServiceAreas() {
+      return this._serviceAreas;
+    },
+
+    /** Get the immutable DSP code */
+    getDspCode() {
+      return this._dspCode || config.deliveryPerfDsp || DEFAULTS.deliveryPerfDsp;
+    },
+
+    /** Get the default station code */
+    getDefaultStation() {
+      return this._defaultStation || config.deliveryPerfStation || DEFAULTS.deliveryPerfStation;
+    },
+
+    /** Get the default service area ID */
+    getDefaultServiceAreaId() {
+      return this._defaultServiceAreaId || config.serviceAreaId || DEFAULTS.serviceAreaId;
+    },
+
+    /**
+     * Build a service area `<option>` list for `<select>` elements.
+     * @param {string} [selectedId] - Pre-select this service area
+     * @returns {string} HTML string of `<option>` elements
+     */
+    buildSaOptions(selectedId) {
+      if (this._serviceAreas.length === 0) {
+        const fallback = selectedId || this.getDefaultServiceAreaId();
+        return `<option value="${esc(fallback)}">${esc(this.getDefaultStation())}</option>`;
+      }
+      const sel = selectedId || this.getDefaultServiceAreaId();
+      return this._serviceAreas.map((sa) => {
+        const selected = sa.serviceAreaId === sel ? ' selected' : '';
+        return `<option value="${esc(sa.serviceAreaId)}"${selected}>${esc(sa.stationCode)}</option>`;
+      }).join('');
+    },
+
+    /**
+     * Populate a `<select>` element with service area options.
+     * @param {HTMLSelectElement} selectEl
+     * @param {string} [selectedId]
+     */
+    populateSaSelect(selectEl, selectedId) {
+      if (!selectEl) return;
+      selectEl.innerHTML = this.buildSaOptions(selectedId);
+    },
+  };
 
   // ═══════════════════════════════════════════════════════════════════════════
   // CSS BLOCK
@@ -611,34 +765,6 @@
       color: var(--ct-danger); font-size: 13px;
     }
 
-    /* Searchable dropdown */
-    .ct-whd-sa-wrapper {
-      position: relative; display: inline-block; min-width: 160px;
-    }
-    .ct-whd-sa-search {
-      min-width: 160px; box-sizing: border-box;
-    }
-    .ct-whd-sa-options {
-      position: absolute; top: 100%; left: 0; right: 0;
-      max-height: 220px; overflow-y: auto;
-      background: var(--ct-bg); border: 1px solid var(--ct-border);
-      border-radius: var(--ct-radius); box-shadow: var(--ct-shadow);
-      list-style: none; margin: 2px 0 0; padding: 0;
-      z-index: 100001; display: none;
-    }
-    .ct-whd-sa-wrapper.ct-whd-sa-open .ct-whd-sa-options {
-      display: block;
-    }
-    .ct-whd-sa-options li {
-      padding: 8px 12px; cursor: pointer; font-size: 13px;
-      font-family: var(--ct-font);
-    }
-    .ct-whd-sa-options li:hover,
-    .ct-whd-sa-options li.ct-whd-sa-active {
-      background: #fff3d6;
-    }
-    .ct-whd-sa-options li.ct-whd-sa-hidden { display: none; }
-
     /* Detail modal */
     .ct-whd-detail-row {
       display: flex; justify-content: space-between; align-items: center;
@@ -1015,6 +1141,10 @@
           <div class="ct-controls">
             <label>Datum:</label>
             <input type="date" id="ct-whc-date" class="ct-input" value="${todayStr()}">
+            <label for="ct-whc-sa">Service Area:</label>
+            <select id="ct-whc-sa" class="ct-select" aria-label="Service Area">
+              <option value="">Wird geladen…</option>
+            </select>
             <select id="ct-whc-mode" class="ct-select">
               <option value="day">Einzelner Tag</option>
               <option value="week">Ganze Woche (Mo–So)</option>
@@ -1038,6 +1168,11 @@
       document.getElementById('ct-whc-close').addEventListener('click', () => this.hide());
       document.getElementById('ct-whc-go').addEventListener('click', () => this._runQuery());
       document.getElementById('ct-whc-export').addEventListener('click', () => this._exportCSV());
+
+      // Populate service area dropdown
+      companyConfig.load().then(() => {
+        companyConfig.populateSaSelect(document.getElementById('ct-whc-sa'));
+      });
 
       onDispose(() => this.dispose());
       log('WHC Dashboard initialized');
@@ -1109,8 +1244,13 @@
     },
 
     // ── API Calls ─────────────────────────────────────────
+    _getSelectedSaId() {
+      const sel = document.getElementById('ct-whc-sa');
+      return (sel && sel.value) ? sel.value : companyConfig.getDefaultServiceAreaId();
+    },
+
     async _fetchNames(fromDate, toDate) {
-      const saId = config.serviceAreaId;
+      const saId = this._getSelectedSaId();
       const url =
         `https://logistics.amazon.de/scheduling/home/api/v2/rosters` +
         `?fromDate=${fromDate}` +
@@ -1156,7 +1296,7 @@
         associatesList: this._associates,
         date: date,
         mode: 'daily',
-        serviceAreaId: config.serviceAreaId,
+        serviceAreaId: this._getSelectedSaId(),
       };
 
       const csrf = getCSRFToken();
@@ -1467,8 +1607,6 @@
 
       const today = todayStr();
       const lastWeek = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-      const saId = esc(config.serviceAreaId);
-
       const overlay = document.createElement('div');
       overlay.className = 'ct-overlay visible';
       overlay.innerHTML = `
@@ -1486,8 +1624,10 @@
           </div>
 
           <div style="margin: 15px 0;">
-            <label><strong>Service Area ID:</strong></label><br>
-            <input type="text" class="ct-input ct-input--full" id="ct-dre-sa" value="${saId}" style="margin-top:5px;">
+            <label><strong>Service Area:</strong></label><br>
+            <select class="ct-input ct-input--full" id="ct-dre-sa" style="margin-top:5px;">
+              <option value="">Wird geladen…</option>
+            </select>
           </div>
 
           <div class="ct-note-box">
@@ -1507,6 +1647,11 @@
 
       document.body.appendChild(overlay);
       this._dialogEl = overlay;
+
+      // Populate service area dropdown
+      companyConfig.load().then(() => {
+        companyConfig.populateSaSelect(document.getElementById('ct-dre-sa'));
+      });
 
       // Backdrop click
       overlay.addEventListener('click', (e) => {
@@ -1540,7 +1685,7 @@
         const serviceAreaId = document.getElementById('ct-dre-sa').value;
 
         if (!startDate || !endDate) { alert('Please select both start and end dates'); return; }
-        if (!serviceAreaId.trim()) { alert('Please enter a Service Area ID'); return; }
+        if (!serviceAreaId.trim()) { alert('Bitte Service Area auswählen'); return; }
 
         overlay.remove();
         this._dialogEl = null;
@@ -2186,17 +2331,10 @@
     },
 
     // ── Lifecycle ────────────────────────────────────────────
-    init() {
+    async init() {
       if (this._overlayEl) return;
 
-      const today    = todayStr();
-      const weekAgo  = (() => {
-        const d = new Date(today);
-        d.setDate(d.getDate() - 6);
-        return d.toISOString().split('T')[0];
-      })();
-      const station  = esc(config.deliveryPerfStation || 'XYZ1');
-      const dsp      = esc(config.deliveryPerfDsp      || 'TEST');
+      const today = todayStr();
 
       const overlay = document.createElement('div');
       overlay.id = 'ct-dp-overlay';
@@ -2208,20 +2346,13 @@
         <div class="ct-dp-panel">
           <h2>📦 Daily Delivery Performance</h2>
           <div class="ct-controls">
-            <label for="ct-dp-from">From:</label>
-            <input type="date" id="ct-dp-from" class="ct-input" value="${weekAgo}"
-                   aria-label="From date">
-            <label for="ct-dp-to">To:</label>
-            <input type="date" id="ct-dp-to" class="ct-input" value="${today}"
-                   aria-label="To date">
-            <label for="ct-dp-station">Station:</label>
-            <input type="text" id="ct-dp-station" class="ct-input"
-                   value="${station}" maxlength="8" style="width:80px"
-                   aria-label="Station code">
-            <label for="ct-dp-dsp">DSP:</label>
-            <input type="text" id="ct-dp-dsp" class="ct-input"
-                   value="${dsp}" maxlength="8" style="width:70px"
-                   aria-label="DSP code">
+            <label for="ct-dp-date">Date:</label>
+            <input type="date" id="ct-dp-date" class="ct-input" value="${today}"
+                   aria-label="Select date">
+            <label for="ct-dp-sa">Service Area:</label>
+            <select id="ct-dp-sa" class="ct-input" aria-label="Service Area">
+              <option value="">Wird geladen…</option>
+            </select>
             <button class="ct-btn ct-btn--accent" id="ct-dp-go">🔍 Fetch</button>
             <button class="ct-btn ct-btn--close" id="ct-dp-close" aria-label="Close">✕ Close</button>
           </div>
@@ -2247,8 +2378,11 @@
         };
       };
       const debouncedFetch = debounce(this._triggerFetch, 600);
-      document.getElementById('ct-dp-from').addEventListener('change', debouncedFetch.bind(this));
-      document.getElementById('ct-dp-to').addEventListener('change', debouncedFetch.bind(this));
+      document.getElementById('ct-dp-date').addEventListener('change', debouncedFetch.bind(this));
+
+      // Populate service area dropdown
+      await companyConfig.load();
+      companyConfig.populateSaSelect(document.getElementById('ct-dp-sa'));
 
       onDispose(() => this.dispose());
       log('Delivery Performance Dashboard initialized');
@@ -2274,7 +2408,7 @@
       this.init();
       this._overlayEl.classList.add('visible');
       this._active = true;
-      document.getElementById('ct-dp-from').focus();
+      document.getElementById('ct-dp-date').focus();
     },
 
     hide() {
@@ -2325,32 +2459,31 @@
 
     // ── Trigger ──────────────────────────────────────────────
     async _triggerFetch() {
-      const from    = document.getElementById('ct-dp-from').value;
-      const to      = document.getElementById('ct-dp-to').value;
-      const station = document.getElementById('ct-dp-station').value.trim().toUpperCase();
-      const dsp     = document.getElementById('ct-dp-dsp').value.trim().toUpperCase();
-
-      const validErr = dpValidateDateRange(from, to);
-      if (validErr) {
-        this._setStatus('⚠️ ' + validErr, 'warn');
+      const date = document.getElementById('ct-dp-date').value;
+      if (!date) {
+        this._setStatus('⚠️ Please select a date.', 'warn');
         return;
       }
-      if (!station) { this._setStatus('⚠️ Station code required.', 'warn'); return; }
-      if (!dsp)     { this._setStatus('⚠️ DSP code required.', 'warn'); return; }
+
+      // Get station from the selected SA option text
+      const saSelect = document.getElementById('ct-dp-sa');
+      const station = saSelect.options[saSelect.selectedIndex]?.textContent?.trim().toUpperCase()
+                    || companyConfig.getDefaultStation();
+      const dsp = companyConfig.getDspCode();
 
       this._setStatus('⏳ Loading…');
       this._setBody('<div class="ct-dp-loading" role="status">Fetching data…</div>');
 
       try {
-        const json = await this._fetchData(from, to, station, dsp);
+        const json = await this._fetchData(date, date, station, dsp);
         const records = dpParseApiResponse(json);
         if (records.length === 0) {
-          this._setBody('<div class="ct-dp-empty">No data returned for the selected range.</div>');
+          this._setBody('<div class="ct-dp-empty">No data returned for the selected date.</div>');
           this._setStatus('⚠️ No records found.');
           return;
         }
         this._setBody(this._renderAll(records));
-        this._setStatus(`✅ ${records.length} record(s) loaded — ${from} to ${to}`);
+        this._setStatus(`✅ ${records.length} record(s) loaded — ${date}`);
       } catch (e) {
         err('Delivery perf fetch failed:', e);
         this._setBody(`<div class="ct-dp-error">❌ ${esc(e.message)}</div>`);
@@ -2740,7 +2873,7 @@
       if (uncached.length > 0) {
         // Try roster API as fallback (employee API doesn't exist)
         try {
-          const saId = config.serviceAreaId;
+          const saId = companyConfig.getDefaultServiceAreaId();
           const today = new Date().toISOString().split('T')[0];
           const fromDate = this._addDays(today, -30); // last 30 days
           const url =
@@ -3410,8 +3543,6 @@
     _detailEl: null,
     _active: false,
     _data: [],
-    _serviceAreas: [],
-    _selectedSaId: null,
     _sort: { column: 'routeCode', direction: 'asc' },
     _page: 1,
     _pageSize: 50,
@@ -3434,17 +3565,8 @@
             <label for="ct-whd-date">Datum:</label>
             <input type="date" id="ct-whd-date" class="ct-input" value="${todayStr()}"
                    aria-label="Datum auswählen">
-            <label>Service Area:</label>
-            <div class="ct-whd-sa-wrapper" id="ct-whd-sa-wrapper">
-              <input type="text" class="ct-input ct-whd-sa-search" id="ct-whd-sa-search"
-                     placeholder="Service Area suchen…"
-                     autocomplete="off"
-                     aria-autocomplete="list"
-                     aria-controls="ct-whd-sa-listbox"
-                     aria-label="Service Area">
-              <ul id="ct-whd-sa-listbox" class="ct-whd-sa-options" role="listbox"
-                  aria-label="Service Areas"></ul>
-            </div>
+            <label for="ct-whd-sa">Service Area:</label>
+            <select id="ct-whd-sa" class="ct-select" aria-label="Service Area"></select>
             <button class="ct-btn ct-btn--accent" id="ct-whd-go" aria-label="Daten abfragen">🔍 Abfragen</button>
             <button class="ct-btn ct-btn--primary" id="ct-whd-export" aria-label="CSV Export">📋 CSV Export</button>
             <button class="ct-btn ct-btn--close" id="ct-whd-close" aria-label="Schließen">✕ Schließen</button>
@@ -3471,11 +3593,10 @@
       document.getElementById('ct-whd-go').addEventListener('click', () => this._fetchData());
       document.getElementById('ct-whd-export').addEventListener('click', () => this._exportCSV());
 
-      // Initialize the searchable service area dropdown
-      this._initSaDropdown();
-
-      // Load service areas
-      this._loadServiceAreas();
+      // Populate service area dropdown
+      companyConfig.load().then(() => {
+        companyConfig.populateSaSelect(document.getElementById('ct-whd-sa'));
+      });
 
       onDispose(() => this.dispose());
       log('Working Hours Dashboard initialized');
@@ -3485,7 +3606,6 @@
       if (this._overlayEl) { this._overlayEl.remove(); this._overlayEl = null; }
       if (this._detailEl) { this._detailEl.remove(); this._detailEl = null; }
       this._data = [];
-      this._serviceAreas = [];
       this._active = false;
     },
 
@@ -3508,167 +3628,6 @@
     hide() {
       if (this._overlayEl) this._overlayEl.classList.remove('visible');
       this._active = false;
-    },
-
-    // ── Searchable Service Area Dropdown ──────────────────
-    _initSaDropdown() {
-      const wrapper = document.getElementById('ct-whd-sa-wrapper');
-      const input = document.getElementById('ct-whd-sa-search');
-      const listbox = document.getElementById('ct-whd-sa-listbox');
-
-      let highlightIdx = -1;
-
-      // Open dropdown on focus/click
-      input.addEventListener('focus', () => {
-        wrapper.classList.add('ct-whd-sa-open');
-        this._filterSaOptions(input.value);
-      });
-
-      input.addEventListener('click', () => {
-        wrapper.classList.add('ct-whd-sa-open');
-      });
-
-      // Filter on typing
-      input.addEventListener('input', () => {
-        wrapper.classList.add('ct-whd-sa-open');
-        highlightIdx = -1;
-        this._filterSaOptions(input.value);
-      });
-
-      // Keyboard navigation
-      input.addEventListener('keydown', (e) => {
-        const visibleItems = [...listbox.querySelectorAll('li:not(.ct-whd-sa-hidden)')];
-        if (e.key === 'ArrowDown') {
-          e.preventDefault();
-          wrapper.classList.add('ct-whd-sa-open');
-          highlightIdx = Math.min(highlightIdx + 1, visibleItems.length - 1);
-          this._highlightSaOption(visibleItems, highlightIdx);
-        } else if (e.key === 'ArrowUp') {
-          e.preventDefault();
-          highlightIdx = Math.max(highlightIdx - 1, 0);
-          this._highlightSaOption(visibleItems, highlightIdx);
-        } else if (e.key === 'Enter') {
-          e.preventDefault();
-          if (highlightIdx >= 0 && highlightIdx < visibleItems.length) {
-            this._selectSaOption(visibleItems[highlightIdx]);
-            wrapper.classList.remove('ct-whd-sa-open');
-          }
-        } else if (e.key === 'Escape') {
-          wrapper.classList.remove('ct-whd-sa-open');
-          input.blur();
-        }
-      });
-
-      // Click to select
-      listbox.addEventListener('click', (e) => {
-        const li = e.target.closest('li');
-        if (li) {
-          this._selectSaOption(li);
-          wrapper.classList.remove('ct-whd-sa-open');
-        }
-      });
-
-      // Close dropdown on outside click
-      document.addEventListener('click', (e) => {
-        if (!wrapper.contains(e.target)) {
-          wrapper.classList.remove('ct-whd-sa-open');
-        }
-      });
-    },
-
-    _filterSaOptions(query) {
-      const listbox = document.getElementById('ct-whd-sa-listbox');
-      if (!listbox) return;
-      const q = (query || '').toLowerCase().trim();
-      listbox.querySelectorAll('li').forEach((li) => {
-        const text = li.textContent.toLowerCase();
-        li.classList.toggle('ct-whd-sa-hidden', q.length > 0 && !text.includes(q));
-      });
-    },
-
-    _highlightSaOption(visibleItems, idx) {
-      const listbox = document.getElementById('ct-whd-sa-listbox');
-      if (!listbox) return;
-      listbox.querySelectorAll('li').forEach((li) => li.classList.remove('ct-whd-sa-active'));
-      if (idx >= 0 && idx < visibleItems.length) {
-        visibleItems[idx].classList.add('ct-whd-sa-active');
-        visibleItems[idx].scrollIntoView({ block: 'nearest' });
-      }
-    },
-
-    _selectSaOption(li) {
-      const saId = li.dataset.value;
-      const label = li.textContent;
-      this._selectedSaId = saId;
-
-      const input = document.getElementById('ct-whd-sa-search');
-      if (input) input.value = label;
-
-      // Update aria-selected
-      const listbox = document.getElementById('ct-whd-sa-listbox');
-      if (listbox) {
-        listbox.querySelectorAll('li').forEach((el) => {
-          el.setAttribute('aria-selected', el === li ? 'true' : 'false');
-        });
-      }
-    },
-
-    // ── Load Service Areas ────────────────────────────────
-    async _loadServiceAreas() {
-      const listbox = document.getElementById('ct-whd-sa-listbox');
-      const input = document.getElementById('ct-whd-sa-search');
-      if (!listbox) return;
-
-      listbox.innerHTML = '<li style="color:var(--ct-muted);font-style:italic;cursor:default;">Wird geladen…</li>';
-
-      try {
-        const resp = await fetch(
-          'https://logistics.amazon.de/account-management/data/get-company-service-areas',
-          { credentials: 'include' }
-        );
-        const json = await resp.json();
-        if (json.success && Array.isArray(json.data) && json.data.length > 0) {
-          this._serviceAreas = json.data;
-          listbox.innerHTML = '';
-
-          let selectedFound = false;
-          json.data.forEach((area) => {
-            const li = document.createElement('li');
-            li.setAttribute('role', 'option');
-            li.dataset.value = area.serviceAreaId;
-            li.textContent = area.stationCode;
-            li.setAttribute('aria-selected', 'false');
-
-            if (area.serviceAreaId === config.serviceAreaId) {
-              li.setAttribute('aria-selected', 'true');
-              this._selectedSaId = area.serviceAreaId;
-              if (input) input.value = area.stationCode;
-              selectedFound = true;
-            }
-            listbox.appendChild(li);
-          });
-
-          // If no match, select first
-          if (!selectedFound && json.data.length > 0) {
-            const first = listbox.querySelector('li');
-            if (first) {
-              first.setAttribute('aria-selected', 'true');
-              this._selectedSaId = json.data[0].serviceAreaId;
-              if (input) input.value = json.data[0].stationCode;
-            }
-          }
-        } else {
-          this._serviceAreas = [];
-          listbox.innerHTML = '<li style="color:var(--ct-muted);cursor:default;">Keine Service Areas gefunden</li>';
-        }
-      } catch (e) {
-        err('WHD: Failed to load service areas:', e);
-        this._serviceAreas = [];
-        listbox.innerHTML = '<li style="color:var(--ct-danger);cursor:default;">Fehler beim Laden</li>';
-        // Fallback: use configured serviceAreaId directly
-        this._selectedSaId = config.serviceAreaId;
-        if (input) input.value = config.serviceAreaId.substring(0, 8) + '…';
-      }
     },
 
     // ── Driver Name Resolution ──────────────────────────────
@@ -3754,7 +3713,8 @@
     // ── Data Fetching ─────────────────────────────────────
     async _fetchData() {
       const date = document.getElementById('ct-whd-date')?.value;
-      const serviceAreaId = this._selectedSaId;
+      const sel = document.getElementById('ct-whd-sa');
+      const serviceAreaId = (sel && sel.value) ? sel.value : companyConfig.getDefaultServiceAreaId();
 
       if (!date) {
         this._setStatus('⚠️ Bitte Datum auswählen.');
@@ -3791,7 +3751,12 @@
         }, { retries: 2, baseMs: 800 });
 
         const json = await resp.json();
-        const summaries = json?.itinerarySummaries || [];
+        // Handle multiple possible response shapes
+        const summaries = json?.itinerarySummaries
+          || json?.summaries
+          || json?.data?.itinerarySummaries
+          || json?.data
+          || (Array.isArray(json) ? json : []);
 
         if (summaries.length === 0) {
           this._data = [];
@@ -3814,7 +3779,7 @@
         this._sort = { column: 'routeCode', direction: 'asc' };
         this._renderTable();
 
-        const stationCode = this._serviceAreas
+        const stationCode = companyConfig.getServiceAreas()
           .find((sa) => sa.serviceAreaId === serviceAreaId)?.stationCode || serviceAreaId;
         const resolvedCount = this._data.filter((r) => r.driverName !== null).length;
         this._setStatus(
@@ -4103,8 +4068,10 @@
       }
 
       const date = document.getElementById('ct-whd-date')?.value || todayStr();
-      const stationCode = this._serviceAreas
-        .find((sa) => sa.serviceAreaId === this._selectedSaId)?.stationCode || 'unknown';
+      const sel = document.getElementById('ct-whd-sa');
+      const saId = (sel && sel.value) ? sel.value : '';
+      const stationCode = companyConfig.getServiceAreas()
+        .find((sa) => sa.serviceAreaId === saId)?.stationCode || 'unknown';
       const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -4181,7 +4148,7 @@
       if (this._overlayEl) return;
 
       const today = todayStr();
-      const saId = config.serviceAreaId;
+      const saId = companyConfig.getDefaultServiceAreaId();
       const defaultSa = RETURNS_SERVICE_AREAS.find((s) => s.id === saId) || RETURNS_SERVICE_AREAS[0];
 
       const overlay = document.createElement('div');
@@ -4320,16 +4287,12 @@
       const select = document.getElementById('ct-ret-sa');
       select.innerHTML = '';
 
-      try {
-        const resp = await fetch('https://logistics.amazon.de/account-management/data/get-company-service-areas', { credentials: 'include' });
-        const json = await resp.json();
-        if (json.success && Array.isArray(json.data) && json.data.length > 0) {
-          this._serviceAreas = json.data;
-        } else {
-          this._serviceAreas = RETURNS_SERVICE_AREAS;
-        }
-      } catch (e) {
-        log('Returns: failed to load service areas, using defaults:', e);
+      await companyConfig.load();
+      const areas = companyConfig.getServiceAreas();
+
+      if (areas.length > 0) {
+        this._serviceAreas = areas;
+      } else {
         this._serviceAreas = RETURNS_SERVICE_AREAS;
       }
 
@@ -4337,11 +4300,11 @@
         const opt = document.createElement('option');
         opt.value = sa.serviceAreaId || sa.id;
         opt.textContent = sa.stationCode || sa.name;
-        if (opt.value === defaultSa.id) opt.selected = true;
+        if (opt.value === (defaultSa.id || defaultSa.serviceAreaId)) opt.selected = true;
         select.appendChild(opt);
       });
 
-      this._selectedSaId = select.value || defaultSa.id;
+      this._selectedSaId = select.value || defaultSa.id || defaultSa.serviceAreaId;
     },
 
     _getCacheKey(localDate, serviceAreaId) {
@@ -5098,6 +5061,55 @@
     return `${d.getUTCFullYear()}-W${String(weekNo).padStart(2, '0')}`;
   }
 
+  /**
+   * Return the CSS colour string for a KPI value used when drawing the
+   * scorecard image on Canvas.  Mirrors getColor() from scorecard_component.tsx.
+   */
+  function _scImgKpiColor(value, type) {
+    switch (type) {
+      case 'DCR':
+        return value < 97   ? 'rgb(235,50,35)'
+             : value < 98.5 ? 'rgb(223,130,68)'
+             : value < 99.5 ? 'rgb(126,170,85)' : 'rgb(77,115,190)';
+      case 'DNRDPMO':
+      case 'LORDPMO':
+        return value < 1100 ? 'rgb(77,115,190)'
+             : value < 1300 ? 'rgb(126,170,85)'
+             : value < 1500 ? 'rgb(223,130,68)' : 'rgb(235,50,35)';
+      case 'POD':
+        return value < 94   ? 'rgb(235,50,35)'
+             : value < 95.5 ? 'rgb(223,130,68)'
+             : value < 97   ? 'rgb(126,170,85)' : 'rgb(77,115,190)';
+      case 'CC':
+        return value < 70   ? 'rgb(235,50,35)'
+             : value < 95   ? 'rgb(223,130,68)'
+             : value < 98.5 ? 'rgb(126,170,85)' : 'rgb(77,115,190)';
+      case 'CE':
+        return value === 0 ? 'rgb(77,115,190)' : 'rgb(235,50,35)';
+      case 'CDFDPMO':
+        return value > 5460 ? 'rgb(235,50,35)'
+             : value > 4450 ? 'rgb(223,130,68)'
+             : value > 3680 ? 'rgb(126,170,85)' : 'rgb(77,115,190)';
+      default:
+        return '#111111';
+    }
+  }
+
+  /**
+   * Return the CSS colour string for a status label used when drawing the
+   * scorecard image on Canvas.  Mirrors getColorForStatus() from scorecard_component.tsx.
+   */
+  function _scImgStatusColor(status) {
+    switch (status) {
+      case 'Poor':          return 'rgb(235,50,35)';
+      case 'Fair':          return 'rgb(223,130,68)';
+      case 'Great':         return 'rgb(126,170,85)';
+      case 'Fantastic':
+      case 'Fantastic Plus': return 'rgb(77,115,190)';
+      default:              return '#111111';
+    }
+  }
+
   const scorecardDashboard = {
     _overlayEl: null,
     _active: false,
@@ -5124,9 +5136,7 @@
     init() {
       if (this._overlayEl) return;
 
-      const curWeek  = scCurrentWeek();
-      const station  = esc(config.deliveryPerfStation || 'XYZ1');
-      const dsp      = esc(config.deliveryPerfDsp || 'TEST');
+      const curWeek = scCurrentWeek();
 
       const overlay = document.createElement('div');
       overlay.id = 'ct-sc-overlay';
@@ -5142,19 +5152,17 @@
             <input type="text" id="ct-sc-week" class="ct-input" value="${curWeek}"
                    placeholder="YYYY-Www" maxlength="8" style="width:100px"
                    aria-label="Week (ISO format, e.g. 2026-W12)">
-            <label for="ct-sc-station">Station:</label>
-            <input type="text" id="ct-sc-station" class="ct-input"
-                   value="${station}" maxlength="8" style="width:80px"
-                   aria-label="Station code">
-            <label for="ct-sc-dsp">DSP:</label>
-            <input type="text" id="ct-sc-dsp" class="ct-input"
-                   value="${dsp}" maxlength="8" style="width:70px"
-                   aria-label="DSP code">
+            <label for="ct-sc-sa">Service Area:</label>
+            <select id="ct-sc-sa" class="ct-input" aria-label="Service Area">
+              <option value="">Wird geladen…</option>
+            </select>
             <button class="ct-btn ct-btn--accent" id="ct-sc-go"
                     aria-label="Fetch scorecard data">🔍 Fetch</button>
             <button class="ct-btn ct-btn--primary" id="ct-sc-export"
-                    aria-label="Export as CSV">📋 CSV Export</button>
-            <button class="ct-btn ct-btn--close" id="ct-sc-close"
+                     aria-label="Export as CSV">📋 CSV Export</button>
+             <button class="ct-btn ct-btn--secondary" id="ct-sc-imgdl"
+                     aria-label="Download table as image">🖼 Download Image</button>
+             <button class="ct-btn ct-btn--close" id="ct-sc-close"
                     aria-label="Close Scorecard">✕ Close</button>
           </div>
           <div id="ct-sc-status" class="ct-status" role="status" aria-live="polite"></div>
@@ -5165,6 +5173,11 @@
       document.body.appendChild(overlay);
       this._overlayEl = overlay;
 
+      // Populate service area dropdown
+      companyConfig.load().then(() => {
+        companyConfig.populateSaSelect(document.getElementById('ct-sc-sa'));
+      });
+
       // Backdrop click to close
       overlay.addEventListener('click', (e) => {
         if (e.target === overlay) this.hide();
@@ -5173,6 +5186,7 @@
       document.getElementById('ct-sc-close').addEventListener('click', () => this.hide());
       document.getElementById('ct-sc-go').addEventListener('click', () => this._triggerFetch());
       document.getElementById('ct-sc-export').addEventListener('click', () => this._exportCSV());
+      document.getElementById('ct-sc-imgdl').addEventListener('click', () => this._downloadAsImage());
 
       // Keyboard: Escape to close
       overlay.addEventListener('keydown', (e) => {
@@ -5267,17 +5281,19 @@
 
     // ── Trigger ──────────────────────────────────────────────
     async _triggerFetch() {
-      const week    = document.getElementById('ct-sc-week').value.trim();
-      const station = document.getElementById('ct-sc-station').value.trim().toUpperCase();
-      const dsp     = document.getElementById('ct-sc-dsp').value.trim().toUpperCase();
+      const week = document.getElementById('ct-sc-week').value.trim();
 
       const validErr = scValidateWeek(week);
       if (validErr) {
         this._setStatus('⚠️ ' + validErr);
         return;
       }
-      if (!station) { this._setStatus('⚠️ Station code required.'); return; }
-      if (!dsp)     { this._setStatus('⚠️ DSP code required.'); return; }
+
+      // Get station from the selected SA option text
+      const saSelect = document.getElementById('ct-sc-sa');
+      const station = saSelect.options[saSelect.selectedIndex]?.textContent?.trim().toUpperCase()
+                    || companyConfig.getDefaultStation();
+      const dsp = companyConfig.getDspCode();
 
       this._setStatus('⏳ Loading…');
       this._setBody('<div class="ct-sc-loading" role="status">Fetching scorecard data…</div>');
@@ -5479,6 +5495,174 @@
       });
     },
 
+    // ── Image Download ────────────────────────────────────────
+    /**
+     * Download the current scorecard table as a PNG image.
+     *
+     * Renders the table entirely via the Canvas 2D API using data from
+     * `_calculatedData`, applying the same KPI colours as the HTML table.
+     * This avoids the SVG foreignObject + tainted-canvas problem that arises
+     * when serialising live DOM into an SVG Blob: the browser flags that canvas
+     * as tainted and refuses `toBlob()`.  Pure Canvas 2D drawing never taints
+     * the canvas because no cross-origin image resources are loaded.
+     */
+    _downloadAsImage() {
+      const data = this._calculatedData;
+      if (!data.length) {
+        this._setStatus('⚠️ No data to capture. Fetch data first.');
+        return;
+      }
+
+      this._setStatus('⏳ Generating image…');
+
+      try {
+        // ── Layout constants ──────────────────────────────────────────────────
+        const SCALE      = 2;          // retina multiplier
+        const FONT       = 'Arial, sans-serif';
+        const FONT_SZ    = 12;         // px (logical)
+        const HEAD_SZ    = 11;
+        const PAD_X      = 8;
+        const PAD_Y      = 6;
+        const ROW_H      = FONT_SZ + PAD_Y * 2;
+        const HEAD_H     = HEAD_SZ + PAD_Y * 2;
+        const TITLE_H    = 32;         // top title bar
+
+        // Column definitions: [header label, field accessor fn, width (logical px)]
+        const week = document.getElementById('ct-sc-week')?.value || '';
+        const COLS = [
+          { label: '#',          w: 36,  get: (r, i) => String(i + 1) },
+          { label: 'DA',         w: 180, get: (r)    => r.daName || r.transporterId },
+          { label: 'Status',     w: 90,  get: (r)    => r.status,
+            color: (r) => _scImgStatusColor(r.status) },
+          { label: 'Score',      w: 60,  get: (r)    => r.totalScore.toFixed(2) },
+          { label: 'Delivered',  w: 70,  get: (r)    => String(Number(r.delivered).toLocaleString()) },
+          { label: 'DCR',        w: 58,  get: (r)    => r.dcr + '%',
+            color: (r) => _scImgKpiColor(parseFloat(r.dcr), 'DCR') },
+          { label: 'DNR DPMO',   w: 72,  get: (r)    => String(parseInt(r.dnrDpmo, 10)),
+            color: (r) => _scImgKpiColor(parseFloat(r.dnrDpmo), 'DNRDPMO') },
+          { label: 'LOR DPMO',   w: 72,  get: (r)    => String(parseInt(r.lorDpmo, 10)),
+            color: (r) => _scImgKpiColor(parseFloat(r.lorDpmo), 'LORDPMO') },
+          { label: 'POD',        w: 58,  get: (r)    => r.pod + '%',
+            color: (r) => _scImgKpiColor(parseFloat(r.pod), 'POD') },
+          { label: 'CC',         w: 58,  get: (r)    => r.cc + '%',
+            color: (r) => _scImgKpiColor(parseFloat(r.cc), 'CC') },
+          { label: 'CE',         w: 44,  get: (r)    => String(parseInt(r.ce, 10)),
+            color: (r) => _scImgKpiColor(parseFloat(r.ce), 'CE') },
+          { label: 'CDF DPMO',   w: 72,  get: (r)    => String(parseInt(r.cdfDpmo, 10)),
+            color: (r) => _scImgKpiColor(parseFloat(r.cdfDpmo), 'CDFDPMO') },
+        ];
+
+        const totalW = COLS.reduce((s, c) => s + c.w, 0);
+        const totalH = TITLE_H + HEAD_H + data.length * ROW_H;
+
+        // ── Create canvas ─────────────────────────────────────────────────────
+        const canvas = document.createElement('canvas');
+        canvas.width  = totalW * SCALE;
+        canvas.height = totalH * SCALE;
+        const ctx = canvas.getContext('2d');
+        ctx.scale(SCALE, SCALE);
+
+        // ── Background ────────────────────────────────────────────────────────
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, totalW, totalH);
+
+        // ── Title bar ─────────────────────────────────────────────────────────
+        ctx.fillStyle = '#232f3e';
+        ctx.fillRect(0, 0, totalW, TITLE_H);
+        ctx.fillStyle = '#ff9900';
+        ctx.font = `bold 14px ${FONT}`;
+        ctx.textBaseline = 'middle';
+        ctx.textAlign = 'left';
+        ctx.fillText(`📋 Scorecard${week ? ' — ' + week : ''}`, PAD_X, TITLE_H / 2);
+
+        // ── Header row ────────────────────────────────────────────────────────
+        let x = 0;
+        const headY = TITLE_H;
+        ctx.fillStyle = '#232f3e';
+        ctx.fillRect(0, headY, totalW, HEAD_H);
+
+        ctx.font = `bold ${HEAD_SZ}px ${FONT}`;
+        ctx.fillStyle = '#ff9900';
+        ctx.textBaseline = 'middle';
+        for (const col of COLS) {
+          ctx.textAlign = 'center';
+          // clip text to column width
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(x, headY, col.w, HEAD_H);
+          ctx.clip();
+          ctx.fillText(col.label, x + col.w / 2, headY + HEAD_H / 2);
+          ctx.restore();
+          // vertical divider
+          ctx.strokeStyle = '#3d4f60';
+          ctx.lineWidth = 0.5;
+          ctx.beginPath(); ctx.moveTo(x, headY); ctx.lineTo(x, headY + HEAD_H); ctx.stroke();
+          x += col.w;
+        }
+
+        // ── Data rows ─────────────────────────────────────────────────────────
+        ctx.font = `${FONT_SZ}px ${FONT}`;
+        ctx.lineWidth = 0.5;
+
+        for (let i = 0; i < data.length; i++) {
+          const row = data[i];
+          const rowY = TITLE_H + HEAD_H + i * ROW_H;
+
+          // Row background (alternating)
+          ctx.fillStyle = i % 2 === 0 ? '#ffffff' : '#f9f9f9';
+          ctx.fillRect(0, rowY, totalW, ROW_H);
+
+          // Row bottom border
+          ctx.strokeStyle = '#dddddd';
+          ctx.beginPath(); ctx.moveTo(0, rowY + ROW_H); ctx.lineTo(totalW, rowY + ROW_H); ctx.stroke();
+
+          x = 0;
+          for (const col of COLS) {
+            const text  = col.get(row, i);
+            const color = col.color ? col.color(row) : '#111111';
+
+            ctx.fillStyle = color;
+            ctx.textBaseline = 'middle';
+            ctx.textAlign = 'center';
+
+            // clip to cell
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(x + 1, rowY, col.w - 2, ROW_H);
+            ctx.clip();
+            ctx.fillText(text, x + col.w / 2, rowY + ROW_H / 2);
+            ctx.restore();
+
+            // cell left border
+            ctx.strokeStyle = '#dddddd';
+            ctx.beginPath(); ctx.moveTo(x, rowY); ctx.lineTo(x, rowY + ROW_H); ctx.stroke();
+
+            x += col.w;
+          }
+        }
+
+        // Outer border
+        ctx.strokeStyle = '#aaaaaa';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(0, 0, totalW, totalH);
+
+        // ── Trigger download ──────────────────────────────────────────────────
+        canvas.toBlob((blob) => {
+          const dlUrl = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = dlUrl;
+          a.download = `scorecard_${week || 'export'}.png`;
+          a.click();
+          URL.revokeObjectURL(dlUrl);
+          this._setStatus('✅ Image downloaded.');
+        }, 'image/png');
+
+      } catch (e) {
+        err('Scorecard image download failed:', e);
+        this._setStatus('❌ Image generation failed: ' + e.message);
+      }
+    },
+
     // ── CSV Export ────────────────────────────────────────────
     _exportCSV() {
       if (!this._calculatedData.length) {
@@ -5562,24 +5746,6 @@
         ${toggleHTML('ct-set-sc',  'Scorecard', config.features.scorecard)}
         ${toggleHTML('ct-set-dev',  'Dev-Mode (ausführliches Logging)', config.dev)}
 
-        <div class="ct-settings-row" style="flex-direction: column; align-items: stretch; gap: 6px;">
-          <label style="margin-bottom: 2px;"><strong>Delivery Perf — Default Station:</strong></label>
-          <input type="text" class="ct-input ct-input--full" id="ct-set-dp-station"
-                 value="${esc(config.deliveryPerfStation || 'XYZ1')}" maxlength="8">
-        </div>
-        <div class="ct-settings-row" style="flex-direction: column; align-items: stretch; gap: 6px;">
-          <label style="margin-bottom: 2px;"><strong>Delivery Perf — Default DSP:</strong></label>
-          <input type="text" class="ct-input ct-input--full" id="ct-set-dp-dsp"
-                 value="${esc(config.deliveryPerfDsp || 'TEST')}" maxlength="8">
-        </div>
-
-        <div class="ct-settings-row" style="flex-direction: column; align-items: stretch;">
-          <label for="ct-set-sa" style="margin-bottom: 6px;"><strong>Service Area:</strong></label>
-          <select id="ct-set-sa" class="ct-input ct-input--full">
-            <option value="">Wird geladen…</option>
-          </select>
-        </div>
-
         <div style="margin-top: 20px; display: flex; gap: 10px; justify-content: flex-end;">
           <button class="ct-btn ct-btn--secondary" id="ct-set-cancel">Abbrechen</button>
           <button class="ct-btn ct-btn--accent" id="ct-set-save">Speichern</button>
@@ -5604,40 +5770,11 @@
       config.features.returnsDashboard = document.getElementById('ct-set-ret').checked;
       config.features.scorecard = document.getElementById('ct-set-sc').checked;
       config.dev = document.getElementById('ct-set-dev').checked;
-      config.deliveryPerfStation = document.getElementById('ct-set-dp-station').value.trim().toUpperCase() || 'XYZ1';
-      config.deliveryPerfDsp     = document.getElementById('ct-set-dp-dsp').value.trim().toUpperCase() || 'TEST';
-      const saSelect = document.getElementById('ct-set-sa');
-      config.serviceAreaId = saSelect.value.trim() || DEFAULTS.serviceAreaId;
       setConfig(config);
       overlay.remove();
       log('Settings saved:', config);
     });
 
-    // Fetch service areas and populate dropdown
-    (async () => {
-      const saSelect = document.getElementById('ct-set-sa');
-      try {
-        const resp = await fetch('https://logistics.amazon.de/account-management/data/get-company-service-areas');
-        const json = await resp.json();
-        if (json.success && Array.isArray(json.data) && json.data.length > 0) {
-          saSelect.innerHTML = '';
-          json.data.forEach((area) => {
-            const opt = document.createElement('option');
-            opt.value = area.serviceAreaId;
-            opt.textContent = area.stationCode;
-            if (area.serviceAreaId === config.serviceAreaId) opt.selected = true;
-            saSelect.appendChild(opt);
-          });
-          // If none matched, pre-select first
-          if (!saSelect.value) saSelect.options[0].selected = true;
-        } else {
-          saSelect.innerHTML = `<option value="${esc(config.serviceAreaId)}">${esc(config.serviceAreaId)}</option>`;
-        }
-      } catch (e) {
-        err('Failed to load service areas:', e);
-        saSelect.innerHTML = `<option value="${esc(config.serviceAreaId)}">${esc(config.serviceAreaId)}</option>`;
-      }
-    })();
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -5666,9 +5803,17 @@
   // BOOT FLOW
   // ═══════════════════════════════════════════════════════════════════════════
 
-  function boot(url = location.href) {
+  async function boot(url = location.href) {
     log('Boot for', url);
     injectNavItem();
+    // Load company config (service areas, DSP) — await so all modules
+    // can access service area data immediately after boot completes.
+    try {
+      await companyConfig.load();
+      log('Company config loaded:', companyConfig.getServiceAreas().length, 'service areas');
+    } catch (e) {
+      err('Company config load failed:', e);
+    }
   }
 
   // Initial injection — wait for nav to appear
