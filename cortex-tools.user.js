@@ -33,6 +33,7 @@
       deliveryPerf: true,
       dvicCheck: true,
       dvicShowTransporters: true,
+      workingHours: true,
     },
   };
 
@@ -566,6 +567,96 @@
     }
   `);
 
+  GM_addStyle(`
+    /* ── Working Hours Dashboard ─────────────────────────── */
+    .ct-whd-panel {
+      background: var(--ct-bg); border-radius: var(--ct-radius-lg);
+      padding: 24px; max-width: 1400px; width: 95vw; max-height: 92vh;
+      overflow-y: auto; box-shadow: var(--ct-shadow-heavy);
+      font-family: var(--ct-font);
+    }
+    .ct-whd-panel h2 { margin: 0 0 16px; color: var(--ct-primary); }
+
+    .ct-whd-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+    .ct-whd-table tr[data-itinerary-id] { cursor: pointer; }
+    .ct-whd-table tr[data-itinerary-id]:hover { background: #fff3d6 !important; }
+    .ct-whd-table tr[data-itinerary-id]:focus {
+      outline: 2px solid var(--ct-accent); outline-offset: -2px;
+    }
+
+    .ct-whd-table th[data-sort] {
+      cursor: pointer; user-select: none; position: relative;
+    }
+    .ct-whd-table th[data-sort]:hover { background: #37475a; }
+    .ct-whd-sort-icon {
+      font-size: 10px; margin-left: 3px; opacity: 0.7;
+    }
+
+    .ct-whd-empty, .ct-whd-loading {
+      text-align: center; padding: 40px; color: var(--ct-muted);
+      font-style: italic;
+    }
+    .ct-whd-error {
+      background: #fff0f0; border: 1px solid #ffcccc;
+      border-radius: var(--ct-radius); padding: 14px;
+      color: var(--ct-danger); font-size: 13px;
+    }
+
+    /* Searchable dropdown */
+    .ct-whd-sa-wrapper {
+      position: relative; display: inline-block; min-width: 160px;
+    }
+    .ct-whd-sa-search {
+      min-width: 160px; box-sizing: border-box;
+    }
+    .ct-whd-sa-options {
+      position: absolute; top: 100%; left: 0; right: 0;
+      max-height: 220px; overflow-y: auto;
+      background: var(--ct-bg); border: 1px solid var(--ct-border);
+      border-radius: var(--ct-radius); box-shadow: var(--ct-shadow);
+      list-style: none; margin: 2px 0 0; padding: 0;
+      z-index: 100001; display: none;
+    }
+    .ct-whd-sa-wrapper.ct-whd-sa-open .ct-whd-sa-options {
+      display: block;
+    }
+    .ct-whd-sa-options li {
+      padding: 8px 12px; cursor: pointer; font-size: 13px;
+      font-family: var(--ct-font);
+    }
+    .ct-whd-sa-options li:hover,
+    .ct-whd-sa-options li.ct-whd-sa-active {
+      background: #fff3d6;
+    }
+    .ct-whd-sa-options li.ct-whd-sa-hidden { display: none; }
+
+    /* Detail modal */
+    .ct-whd-detail-row {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 8px 0; border-bottom: 1px solid #eee;
+    }
+    .ct-whd-detail-row:last-child { border-bottom: none; }
+    .ct-whd-detail-label { font-size: 12px; color: var(--ct-muted); }
+    .ct-whd-detail-value { font-weight: bold; font-size: 13px; }
+    .ct-whd-copy-btn {
+      padding: 3px 8px; font-size: 11px; border: 1px solid var(--ct-border);
+      border-radius: 3px; background: #f7f8fa; cursor: pointer;
+      font-family: var(--ct-font); color: var(--ct-info);
+    }
+    .ct-whd-copy-btn:hover { background: #e7f3ff; }
+
+    .ct-whd-pagination {
+      display: flex; align-items: center; gap: 10px;
+      margin-top: 12px; justify-content: center; font-size: 13px;
+    }
+    .ct-whd-page-info { color: var(--ct-muted); }
+
+    @media (max-width: 768px) {
+      .ct-whd-panel { min-width: unset; width: 95vw; padding: 16px; }
+    }
+  `);
+
   // ═══════════════════════════════════════════════════════════════════════════
   // NAVBAR INJECTION SYSTEM
   // ═══════════════════════════════════════════════════════════════════════════
@@ -608,6 +699,9 @@
           <li class="fp-sub-menu-list-item">
             <a href="#" data-ct-tool="dvic-check">🚛 DVIC Check</a>
           </li>
+          <li class="fp-sub-menu-list-item">
+            <a href="#" data-ct-tool="working-hours">⏱ Working Hours</a>
+          </li>
           <li class="ct-divider" role="separator"></li>
           <li class="fp-sub-menu-list-item">
             <a href="#" data-ct-tool="settings">⚙ Einstellungen</a>
@@ -629,6 +723,7 @@
             case 'date-extractor': dateRangeExtractor.showDialog(); break;
             case 'delivery-perf': deliveryPerformance.toggle(); break;
             case 'dvic-check': dvicCheck.toggle(); break;
+            case 'working-hours': workingHoursDashboard.toggle(); break;
             case 'settings': openSettings(); break;
           }
         } catch (ex) {
@@ -2968,6 +3063,743 @@
   };
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // MODULE: WORKING HOURS DASHBOARD
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Normalise an epoch value to milliseconds.
+   * Handles microseconds, milliseconds, seconds, and small durations.
+   */
+  function whdNormalizeEpochMs(value) {
+    if (value === null || value === undefined) return null;
+    const n = Number(value);
+    if (isNaN(n)) return null;
+    if (n > 1_000_000_000_000_000) return Math.floor(n / 1000); // μs → ms
+    if (n > 1_000_000_000_000) return n;                         // ms
+    if (n > 1_000_000_000) return n * 1000;                      // s → ms
+    return n; // small value = duration in ms
+  }
+
+  /**
+   * Format millisecond epoch as HH:mm in Europe/Berlin timezone.
+   */
+  function whdFormatTime(epochMs) {
+    if (epochMs === null || epochMs === undefined) return '—';
+    try {
+      return new Date(epochMs).toLocaleTimeString('de-DE', {
+        timeZone: 'Europe/Berlin',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      });
+    } catch {
+      return '—';
+    }
+  }
+
+  /**
+   * Format duration in ms as "Xm Ys".
+   */
+  function whdFormatDuration(ms) {
+    if (ms === null || ms === undefined) return '—';
+    const n = Number(ms);
+    if (isNaN(n)) return '—';
+    const totalSec = Math.floor(n / 1000);
+    const minutes = Math.floor(totalSec / 60);
+    const seconds = totalSec % 60;
+    return `${minutes}m ${String(seconds).padStart(2, '0')}s`;
+  }
+
+  /**
+   * Extract a normalised row from a raw itinerarySummary item.
+   */
+  function whdExtractRow(item) {
+    const tta = item.transporterTimeAttributes || {};
+    return {
+      itineraryId:             item.itineraryId ?? null,
+      routeCode:               item.routeCode ?? null,
+      serviceTypeName:         item.serviceTypeName ?? null,
+      blockDurationInMinutes:  item.blockDurationInMinutes ?? null,
+      waveStartTime:           whdNormalizeEpochMs(item.waveStartTime),
+      itineraryStartTime:      whdNormalizeEpochMs(item.itineraryStartTime),
+      plannedDepartureTime:    whdNormalizeEpochMs(item.plannedDepartureTime),
+      actualDepartureTime:     whdNormalizeEpochMs(tta.actualDepartureTime),
+      plannedOutboundStemTime: tta.plannedOutboundStemTime ?? null,
+      actualOutboundStemTime:  tta.actualOutboundStemTime ?? null,
+      lastDriverEventTime:     whdNormalizeEpochMs(item.lastDriverEventTime),
+    };
+  }
+
+  /**
+   * Sort an array of row objects by a given column + direction.
+   * Nulls always sort last.
+   */
+  function whdSortRows(rows, column, direction) {
+    const mult = direction === 'asc' ? 1 : -1;
+    return [...rows].sort((a, b) => {
+      const va = a[column];
+      const vb = b[column];
+      if (va === null && vb === null) return 0;
+      if (va === null) return 1;
+      if (vb === null) return -1;
+      if (typeof va === 'string') return mult * va.localeCompare(vb);
+      return mult * (va - vb);
+    });
+  }
+
+  /** Column definitions for the table */
+  const WHD_COLUMNS = [
+    { key: 'routeCode',              label: 'Route Code',       type: 'string'   },
+    { key: 'serviceTypeName',        label: 'Service Type',     type: 'string'   },
+    { key: 'blockDurationInMinutes', label: 'Block (min)',      type: 'integer'  },
+    { key: 'waveStartTime',          label: 'Wave Start',       type: 'time'     },
+    { key: 'itineraryStartTime',     label: 'Itin. Start',      type: 'time'     },
+    { key: 'plannedDepartureTime',   label: 'Planned Dep.',     type: 'time'     },
+    { key: 'actualDepartureTime',    label: 'Actual Dep.',      type: 'time'     },
+    { key: 'plannedOutboundStemTime',label: 'Planned OB Stem',  type: 'duration' },
+    { key: 'actualOutboundStemTime', label: 'Actual OB Stem',   type: 'duration' },
+    { key: 'lastDriverEventTime',    label: 'Last Driver Event',type: 'time'     },
+  ];
+
+  /** Detail modal field definitions (includes itineraryId) */
+  const WHD_DETAIL_FIELDS = [
+    { key: 'itineraryId',            label: 'Itinerary ID',      format: 'string'   },
+    { key: 'routeCode',              label: 'Route Code',        format: 'string'   },
+    { key: 'serviceTypeName',        label: 'Service Type',      format: 'string'   },
+    { key: 'blockDurationInMinutes', label: 'Block Duration',    format: 'integer', suffix: ' min' },
+    { key: 'waveStartTime',          label: 'Wave Start',        format: 'time'     },
+    { key: 'itineraryStartTime',     label: 'Itin. Start',       format: 'time'     },
+    { key: 'plannedDepartureTime',   label: 'Planned Departure', format: 'time'     },
+    { key: 'actualDepartureTime',    label: 'Actual Departure',  format: 'time'     },
+    { key: 'plannedOutboundStemTime',label: 'Planned OB Stem',   format: 'duration' },
+    { key: 'actualOutboundStemTime', label: 'Actual OB Stem',    format: 'duration' },
+    { key: 'lastDriverEventTime',    label: 'Last Driver Event', format: 'time'     },
+  ];
+
+  const workingHoursDashboard = {
+    _overlayEl: null,
+    _detailEl: null,
+    _active: false,
+    _data: [],
+    _serviceAreas: [],
+    _selectedSaId: null,
+    _sort: { column: 'routeCode', direction: 'asc' },
+    _page: 1,
+    _pageSize: 50,
+
+    // ── Lifecycle ─────────────────────────────────────────
+    init() {
+      if (this._overlayEl) return;
+
+      const overlay = document.createElement('div');
+      overlay.id = 'ct-whd-overlay';
+      overlay.className = 'ct-overlay';
+      overlay.setAttribute('role', 'dialog');
+      overlay.setAttribute('aria-modal', 'true');
+      overlay.setAttribute('aria-label', 'Working Hours Dashboard');
+      overlay.innerHTML = `
+        <div class="ct-whd-panel">
+          <h2>⏱ Working Hours Dashboard</h2>
+          <div class="ct-controls">
+            <label for="ct-whd-date">Datum:</label>
+            <input type="date" id="ct-whd-date" class="ct-input" value="${todayStr()}"
+                   aria-label="Datum auswählen">
+            <label>Service Area:</label>
+            <div class="ct-whd-sa-wrapper" id="ct-whd-sa-wrapper">
+              <input type="text" class="ct-input ct-whd-sa-search" id="ct-whd-sa-search"
+                     placeholder="Service Area suchen…"
+                     autocomplete="off"
+                     aria-autocomplete="list"
+                     aria-controls="ct-whd-sa-listbox"
+                     aria-label="Service Area">
+              <ul id="ct-whd-sa-listbox" class="ct-whd-sa-options" role="listbox"
+                  aria-label="Service Areas"></ul>
+            </div>
+            <button class="ct-btn ct-btn--accent" id="ct-whd-go" aria-label="Daten abfragen">🔍 Abfragen</button>
+            <button class="ct-btn ct-btn--primary" id="ct-whd-export" aria-label="CSV Export">📋 CSV Export</button>
+            <button class="ct-btn ct-btn--close" id="ct-whd-close" aria-label="Schließen">✕ Schließen</button>
+          </div>
+          <div id="ct-whd-status" class="ct-status" role="status" aria-live="polite"></div>
+          <div id="ct-whd-body"></div>
+        </div>
+      `;
+
+      document.body.appendChild(overlay);
+      this._overlayEl = overlay;
+
+      // Backdrop click to close
+      overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) this.hide();
+      });
+
+      // Escape key closes overlay
+      overlay.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') this.hide();
+      });
+
+      document.getElementById('ct-whd-close').addEventListener('click', () => this.hide());
+      document.getElementById('ct-whd-go').addEventListener('click', () => this._fetchData());
+      document.getElementById('ct-whd-export').addEventListener('click', () => this._exportCSV());
+
+      // Initialize the searchable service area dropdown
+      this._initSaDropdown();
+
+      // Load service areas
+      this._loadServiceAreas();
+
+      onDispose(() => this.dispose());
+      log('Working Hours Dashboard initialized');
+    },
+
+    dispose() {
+      if (this._overlayEl) { this._overlayEl.remove(); this._overlayEl = null; }
+      if (this._detailEl) { this._detailEl.remove(); this._detailEl = null; }
+      this._data = [];
+      this._serviceAreas = [];
+      this._active = false;
+    },
+
+    toggle() {
+      if (!config.features.workingHours) {
+        alert('Working Hours Dashboard ist deaktiviert. Bitte in den Einstellungen aktivieren.');
+        return;
+      }
+      this.init();
+      if (this._active) this.hide(); else this.show();
+    },
+
+    show() {
+      this.init();
+      this._overlayEl.classList.add('visible');
+      this._active = true;
+      document.getElementById('ct-whd-date').focus();
+    },
+
+    hide() {
+      if (this._overlayEl) this._overlayEl.classList.remove('visible');
+      this._active = false;
+    },
+
+    // ── Searchable Service Area Dropdown ──────────────────
+    _initSaDropdown() {
+      const wrapper = document.getElementById('ct-whd-sa-wrapper');
+      const input = document.getElementById('ct-whd-sa-search');
+      const listbox = document.getElementById('ct-whd-sa-listbox');
+
+      let highlightIdx = -1;
+
+      // Open dropdown on focus/click
+      input.addEventListener('focus', () => {
+        wrapper.classList.add('ct-whd-sa-open');
+        this._filterSaOptions(input.value);
+      });
+
+      input.addEventListener('click', () => {
+        wrapper.classList.add('ct-whd-sa-open');
+      });
+
+      // Filter on typing
+      input.addEventListener('input', () => {
+        wrapper.classList.add('ct-whd-sa-open');
+        highlightIdx = -1;
+        this._filterSaOptions(input.value);
+      });
+
+      // Keyboard navigation
+      input.addEventListener('keydown', (e) => {
+        const visibleItems = [...listbox.querySelectorAll('li:not(.ct-whd-sa-hidden)')];
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          wrapper.classList.add('ct-whd-sa-open');
+          highlightIdx = Math.min(highlightIdx + 1, visibleItems.length - 1);
+          this._highlightSaOption(visibleItems, highlightIdx);
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          highlightIdx = Math.max(highlightIdx - 1, 0);
+          this._highlightSaOption(visibleItems, highlightIdx);
+        } else if (e.key === 'Enter') {
+          e.preventDefault();
+          if (highlightIdx >= 0 && highlightIdx < visibleItems.length) {
+            this._selectSaOption(visibleItems[highlightIdx]);
+            wrapper.classList.remove('ct-whd-sa-open');
+          }
+        } else if (e.key === 'Escape') {
+          wrapper.classList.remove('ct-whd-sa-open');
+          input.blur();
+        }
+      });
+
+      // Click to select
+      listbox.addEventListener('click', (e) => {
+        const li = e.target.closest('li');
+        if (li) {
+          this._selectSaOption(li);
+          wrapper.classList.remove('ct-whd-sa-open');
+        }
+      });
+
+      // Close dropdown on outside click
+      document.addEventListener('click', (e) => {
+        if (!wrapper.contains(e.target)) {
+          wrapper.classList.remove('ct-whd-sa-open');
+        }
+      });
+    },
+
+    _filterSaOptions(query) {
+      const listbox = document.getElementById('ct-whd-sa-listbox');
+      if (!listbox) return;
+      const q = (query || '').toLowerCase().trim();
+      listbox.querySelectorAll('li').forEach((li) => {
+        const text = li.textContent.toLowerCase();
+        li.classList.toggle('ct-whd-sa-hidden', q.length > 0 && !text.includes(q));
+      });
+    },
+
+    _highlightSaOption(visibleItems, idx) {
+      const listbox = document.getElementById('ct-whd-sa-listbox');
+      if (!listbox) return;
+      listbox.querySelectorAll('li').forEach((li) => li.classList.remove('ct-whd-sa-active'));
+      if (idx >= 0 && idx < visibleItems.length) {
+        visibleItems[idx].classList.add('ct-whd-sa-active');
+        visibleItems[idx].scrollIntoView({ block: 'nearest' });
+      }
+    },
+
+    _selectSaOption(li) {
+      const saId = li.dataset.value;
+      const label = li.textContent;
+      this._selectedSaId = saId;
+
+      const input = document.getElementById('ct-whd-sa-search');
+      if (input) input.value = label;
+
+      // Update aria-selected
+      const listbox = document.getElementById('ct-whd-sa-listbox');
+      if (listbox) {
+        listbox.querySelectorAll('li').forEach((el) => {
+          el.setAttribute('aria-selected', el === li ? 'true' : 'false');
+        });
+      }
+    },
+
+    // ── Load Service Areas ────────────────────────────────
+    async _loadServiceAreas() {
+      const listbox = document.getElementById('ct-whd-sa-listbox');
+      const input = document.getElementById('ct-whd-sa-search');
+      if (!listbox) return;
+
+      listbox.innerHTML = '<li style="color:var(--ct-muted);font-style:italic;cursor:default;">Wird geladen…</li>';
+
+      try {
+        const resp = await fetch(
+          'https://logistics.amazon.de/account-management/data/get-company-service-areas',
+          { credentials: 'include' }
+        );
+        const json = await resp.json();
+        if (json.success && Array.isArray(json.data) && json.data.length > 0) {
+          this._serviceAreas = json.data;
+          listbox.innerHTML = '';
+
+          let selectedFound = false;
+          json.data.forEach((area) => {
+            const li = document.createElement('li');
+            li.setAttribute('role', 'option');
+            li.dataset.value = area.serviceAreaId;
+            li.textContent = area.stationCode;
+            li.setAttribute('aria-selected', 'false');
+
+            if (area.serviceAreaId === config.serviceAreaId) {
+              li.setAttribute('aria-selected', 'true');
+              this._selectedSaId = area.serviceAreaId;
+              if (input) input.value = area.stationCode;
+              selectedFound = true;
+            }
+            listbox.appendChild(li);
+          });
+
+          // If no match, select first
+          if (!selectedFound && json.data.length > 0) {
+            const first = listbox.querySelector('li');
+            if (first) {
+              first.setAttribute('aria-selected', 'true');
+              this._selectedSaId = json.data[0].serviceAreaId;
+              if (input) input.value = json.data[0].stationCode;
+            }
+          }
+        } else {
+          this._serviceAreas = [];
+          listbox.innerHTML = '<li style="color:var(--ct-muted);cursor:default;">Keine Service Areas gefunden</li>';
+        }
+      } catch (e) {
+        err('WHD: Failed to load service areas:', e);
+        this._serviceAreas = [];
+        listbox.innerHTML = '<li style="color:var(--ct-danger);cursor:default;">Fehler beim Laden</li>';
+        // Fallback: use configured serviceAreaId directly
+        this._selectedSaId = config.serviceAreaId;
+        if (input) input.value = config.serviceAreaId.substring(0, 8) + '…';
+      }
+    },
+
+    // ── Data Fetching ─────────────────────────────────────
+    async _fetchData() {
+      const date = document.getElementById('ct-whd-date')?.value;
+      const serviceAreaId = this._selectedSaId;
+
+      if (!date) {
+        this._setStatus('⚠️ Bitte Datum auswählen.');
+        return;
+      }
+      if (!serviceAreaId) {
+        this._setStatus('⚠️ Bitte Service Area auswählen.');
+        return;
+      }
+
+      this._setStatus(`⏳ Lade Daten für ${date}…`);
+      this._setBody('<div class="ct-whd-loading" role="status">Daten werden geladen…</div>');
+
+      try {
+        const apiUrl =
+          `https://logistics.amazon.de/operations/execution/api/summaries` +
+          `?historicalDay=false&localDate=${date}&serviceAreaId=${serviceAreaId}`;
+
+        const resp = await withRetry(async () => {
+          const r = await fetch(apiUrl, {
+            method: 'GET',
+            credentials: 'same-origin',
+            headers: {
+              Accept: 'application/json, text/plain, */*',
+              'Accept-Language': 'de,en-US;q=0.7,en;q=0.3',
+              'user-ref': 'cortex-webapp-user',
+              'X-Cortex-Timestamp': Date.now().toString(),
+              'X-Cortex-Session': extractSessionFromCookie(),
+              Referer: location.href,
+            },
+          });
+          if (!r.ok) throw new Error(`HTTP ${r.status}: ${r.statusText}`);
+          return r;
+        }, { retries: 2, baseMs: 800 });
+
+        const json = await resp.json();
+        const summaries = json?.itinerarySummaries || [];
+
+        if (summaries.length === 0) {
+          this._data = [];
+          this._setBody(`
+            <div class="ct-whd-empty">
+              📭 Keine Itineraries gefunden.<br>
+              <small>Bitte Datum/Service Area prüfen.</small>
+            </div>`);
+          this._setStatus('⚠️ Keine Daten für diesen Tag/Service Area.');
+          return;
+        }
+
+        this._data = summaries.map(whdExtractRow);
+        this._page = 1;
+        this._sort = { column: 'routeCode', direction: 'asc' };
+        this._renderTable();
+
+        const stationCode = this._serviceAreas
+          .find((sa) => sa.serviceAreaId === serviceAreaId)?.stationCode || serviceAreaId;
+        this._setStatus(`✅ ${this._data.length} Itineraries geladen — ${date} / ${stationCode}`);
+      } catch (e) {
+        err('WHD fetch failed:', e);
+        this._data = [];
+        this._setBody(`
+          <div class="ct-whd-error" role="alert">
+            ❌ Daten konnten nicht geladen werden.<br>
+            <small>${esc(e.message)}</small><br><br>
+            <button class="ct-btn ct-btn--accent" id="ct-whd-retry">🔄 Erneut versuchen</button>
+          </div>`);
+        this._setStatus('❌ Fehler beim Laden.');
+        document.getElementById('ct-whd-retry')
+          ?.addEventListener('click', () => this._fetchData());
+      }
+    },
+
+    // ── Table Rendering ───────────────────────────────────
+    _renderTable() {
+      const sorted = whdSortRows(this._data, this._sort.column, this._sort.direction);
+      const totalPages = Math.max(1, Math.ceil(sorted.length / this._pageSize));
+
+      // Clamp page
+      if (this._page > totalPages) this._page = totalPages;
+      const start = (this._page - 1) * this._pageSize;
+      const slice = sorted.slice(start, start + this._pageSize);
+
+      const thSortIcon = (col) => {
+        if (this._sort.column !== col) return '';
+        return `<span class="ct-whd-sort-icon">${this._sort.direction === 'asc' ? '▲' : '▼'}</span>`;
+      };
+
+      const ariaSort = (col) => {
+        if (this._sort.column !== col) return 'none';
+        return this._sort.direction === 'asc' ? 'ascending' : 'descending';
+      };
+
+      const thHtml = WHD_COLUMNS.map((h) =>
+        `<th scope="col" role="columnheader" aria-sort="${ariaSort(h.key)}"
+             data-sort="${h.key}" title="Sort by ${esc(h.label)}">
+           ${esc(h.label)}${thSortIcon(h.key)}
+         </th>`
+      ).join('');
+
+      const trHtml = slice.map((row) => {
+        const cells = WHD_COLUMNS.map((h) => {
+          const val = row[h.key];
+          if (val === null || val === undefined) {
+            return '<td class="ct-nodata">—</td>';
+          }
+          switch (h.type) {
+            case 'duration': return `<td>${esc(whdFormatDuration(val))}</td>`;
+            case 'integer':  return `<td>${esc(String(val))}</td>`;
+            case 'string':   return `<td>${esc(String(val))}</td>`;
+            case 'time':     return `<td>${esc(whdFormatTime(val))}</td>`;
+            default:         return `<td>${esc(String(val))}</td>`;
+          }
+        }).join('');
+
+        return `<tr data-itinerary-id="${esc(row.itineraryId || '')}"
+                    role="row" tabindex="0">${cells}</tr>`;
+      }).join('');
+
+      const paginationHtml = this._renderPagination(sorted.length, this._page, totalPages);
+
+      this._setBody(`
+        <div class="ct-whd-table-wrap">
+          <table class="ct-table ct-whd-table" role="grid"
+                 aria-label="Working Hours Dashboard">
+            <thead><tr>${thHtml}</tr></thead>
+            <tbody>${trHtml}</tbody>
+          </table>
+        </div>
+        ${paginationHtml}
+      `);
+
+      this._attachTableHandlers();
+    },
+
+    _attachTableHandlers() {
+      const body = document.getElementById('ct-whd-body');
+      if (!body) return;
+
+      // Sort handlers on <th>
+      body.querySelectorAll('th[data-sort]').forEach((th) => {
+        th.addEventListener('click', () => {
+          const col = th.dataset.sort;
+          if (this._sort.column === col) {
+            this._sort.direction = this._sort.direction === 'asc' ? 'desc' : 'asc';
+          } else {
+            this._sort.column = col;
+            this._sort.direction = 'asc';
+          }
+          this._renderTable();
+        });
+      });
+
+      // Row click → detail modal
+      body.querySelectorAll('tr[data-itinerary-id]').forEach((tr) => {
+        tr.addEventListener('click', () => {
+          const id = tr.dataset.itineraryId;
+          if (id) this._showDetail(id);
+        });
+        tr.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            const id = tr.dataset.itineraryId;
+            if (id) this._showDetail(id);
+          }
+        });
+      });
+
+      // Pagination handlers
+      body.querySelector('.ct-whd-prev')?.addEventListener('click', () => {
+        if (this._page > 1) { this._page--; this._renderTable(); }
+      });
+      body.querySelector('.ct-whd-next')?.addEventListener('click', () => {
+        const totalPages = Math.ceil(this._data.length / this._pageSize);
+        if (this._page < totalPages) { this._page++; this._renderTable(); }
+      });
+    },
+
+    // ── Pagination ────────────────────────────────────────
+    _renderPagination(total, current, totalPages) {
+      if (totalPages <= 1) return '';
+      return `
+        <div class="ct-whd-pagination">
+          <button class="ct-btn ct-btn--secondary ct-whd-prev"
+                  ${current <= 1 ? 'disabled' : ''}
+                  aria-label="Vorherige Seite">‹ Zurück</button>
+          <span class="ct-whd-page-info">Seite ${current} / ${totalPages} (${total} Einträge)</span>
+          <button class="ct-btn ct-btn--secondary ct-whd-next"
+                  ${current >= totalPages ? 'disabled' : ''}
+                  aria-label="Nächste Seite">Weiter ›</button>
+        </div>`;
+    },
+
+    // ── Detail Modal ──────────────────────────────────────
+    _showDetail(itineraryId) {
+      const row = this._data.find((r) => r.itineraryId === itineraryId);
+      if (!row) return;
+
+      // Remove any existing detail modal
+      if (this._detailEl) { this._detailEl.remove(); this._detailEl = null; }
+
+      const formatForDisplay = (field, value) => {
+        if (value === null || value === undefined) return '—';
+        switch (field.format) {
+          case 'time':     return whdFormatTime(value);
+          case 'duration': return whdFormatDuration(value);
+          case 'integer':  return String(value) + (field.suffix || '');
+          default:         return String(value);
+        }
+      };
+
+      const fieldsHtml = WHD_DETAIL_FIELDS.map((f) => {
+        const displayValue = formatForDisplay(f, row[f.key]);
+        return `
+          <div class="ct-whd-detail-row">
+            <div>
+              <span class="ct-whd-detail-label">${esc(f.label)}</span><br>
+              <span class="ct-whd-detail-value">${esc(displayValue)}</span>
+            </div>
+            <button class="ct-whd-copy-btn" data-copy-value="${esc(displayValue)}"
+                    aria-label="Copy ${esc(f.label)}">📋 Copy</button>
+          </div>`;
+      }).join('');
+
+      const allText = WHD_DETAIL_FIELDS.map((f) =>
+        `${f.label}: ${formatForDisplay(f, row[f.key])}`
+      ).join('\n');
+
+      const modal = document.createElement('div');
+      modal.className = 'ct-overlay visible';
+      modal.setAttribute('role', 'dialog');
+      modal.setAttribute('aria-modal', 'true');
+      modal.setAttribute('aria-label', `Itinerary Details for ${row.routeCode || row.itineraryId}`);
+
+      modal.innerHTML = `
+        <div class="ct-dialog" style="min-width:420px;max-width:580px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+            <h3 style="margin:0;color:var(--ct-primary);">📋 Itinerary Details</h3>
+            <button class="ct-btn ct-btn--close" id="ct-whd-detail-close"
+                    aria-label="Close" style="margin-left:auto;">✕</button>
+          </div>
+          ${fieldsHtml}
+          <div style="margin-top:16px;text-align:center;">
+            <button class="ct-btn ct-btn--primary" id="ct-whd-copy-all"
+                    aria-label="Copy all fields">📋 Copy All</button>
+          </div>
+        </div>
+      `;
+
+      document.body.appendChild(modal);
+      this._detailEl = modal;
+
+      const closeModal = () => {
+        modal.remove();
+        this._detailEl = null;
+      };
+
+      // Close handlers
+      modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+      document.getElementById('ct-whd-detail-close').addEventListener('click', closeModal);
+      modal.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+
+      // Copy individual field
+      modal.querySelectorAll('.ct-whd-copy-btn').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const val = btn.dataset.copyValue;
+          navigator.clipboard.writeText(val).then(() => {
+            const origText = btn.textContent;
+            btn.textContent = '✅ Copied!';
+            setTimeout(() => { btn.textContent = origText; }, 1500);
+          }).catch(() => {
+            // Fallback for clipboard errors
+            btn.textContent = '⚠️ Failed';
+            setTimeout(() => { btn.textContent = '📋 Copy'; }, 1500);
+          });
+        });
+      });
+
+      // Copy all
+      document.getElementById('ct-whd-copy-all').addEventListener('click', () => {
+        const btn = document.getElementById('ct-whd-copy-all');
+        navigator.clipboard.writeText(allText).then(() => {
+          btn.textContent = '✅ All Copied!';
+          setTimeout(() => { btn.textContent = '📋 Copy All'; }, 1500);
+        }).catch(() => {
+          btn.textContent = '⚠️ Failed';
+          setTimeout(() => { btn.textContent = '📋 Copy All'; }, 1500);
+        });
+      });
+
+      // Focus trap: focus close button initially
+      document.getElementById('ct-whd-detail-close').focus();
+    },
+
+    // ── CSV Export ─────────────────────────────────────────
+    _exportCSV() {
+      if (!this._data || this._data.length === 0) {
+        alert('Bitte zuerst Daten laden.');
+        return;
+      }
+
+      const sep = ';';
+      const csvHeaders = [
+        'routeCode', 'serviceTypeName', 'blockDurationInMinutes',
+        'waveStartTime', 'itineraryStartTime', 'plannedDepartureTime',
+        'actualDepartureTime', 'plannedOutboundStemTime',
+        'actualOutboundStemTime', 'lastDriverEventTime', 'itineraryId',
+      ];
+
+      let csv = csvHeaders.join(sep) + '\n';
+      const sorted = whdSortRows(this._data, this._sort.column, this._sort.direction);
+
+      for (const row of sorted) {
+        const cells = csvHeaders.map((h) => {
+          const val = row[h];
+          if (val === null || val === undefined) return '';
+          if (h === 'plannedOutboundStemTime' || h === 'actualOutboundStemTime') {
+            return whdFormatDuration(val);
+          }
+          if (h === 'routeCode' || h === 'serviceTypeName' || h === 'itineraryId') {
+            return String(val);
+          }
+          if (h === 'blockDurationInMinutes') {
+            return String(val);
+          }
+          // time fields
+          return whdFormatTime(val);
+        });
+        csv += cells.join(sep) + '\n';
+      }
+
+      const date = document.getElementById('ct-whd-date')?.value || todayStr();
+      const stationCode = this._serviceAreas
+        .find((sa) => sa.serviceAreaId === this._selectedSaId)?.stationCode || 'unknown';
+      const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `working_hours_${date}_${stationCode}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    },
+
+    // ── Helpers ────────────────────────────────────────────
+    _setStatus(msg) {
+      const el = document.getElementById('ct-whd-status');
+      if (el) el.textContent = msg;
+    },
+    _setBody(html) {
+      const el = document.getElementById('ct-whd-body');
+      if (el) el.innerHTML = html;
+    },
+  };
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // SETTINGS DIALOG
   // ═══════════════════════════════════════════════════════════════════════════
 
@@ -3003,6 +3835,7 @@
         ${toggleHTML('ct-set-dre',  'Date Range Extractor', config.features.dateExtractor)}
         ${toggleHTML('ct-set-dp',   'Daily Delivery Performance', config.features.deliveryPerf)}
         ${toggleHTML('ct-set-dvic', 'DVIC Check', config.features.dvicCheck)}
+        ${toggleHTML('ct-set-whd',  'Working Hours Dashboard', config.features.workingHours)}
         ${toggleHTML('ct-set-dev',  'Dev-Mode (ausführliches Logging)', config.dev)}
 
         <div class="ct-settings-row" style="flex-direction: column; align-items: stretch; gap: 6px;">
@@ -3043,6 +3876,7 @@
       config.features.dateExtractor = document.getElementById('ct-set-dre').checked;
       config.features.deliveryPerf  = document.getElementById('ct-set-dp').checked;
       config.features.dvicCheck     = document.getElementById('ct-set-dvic').checked;
+      config.features.workingHours  = document.getElementById('ct-set-whd').checked;
       config.dev = document.getElementById('ct-set-dev').checked;
       config.deliveryPerfStation = document.getElementById('ct-set-dp-station').value.trim().toUpperCase() || 'XYZ1';
       config.deliveryPerfDsp     = document.getElementById('ct-set-dp-dsp').value.trim().toUpperCase() || 'TEST';
@@ -3141,6 +3975,7 @@
   GM_registerMenuCommand('📅 Date Range Extractor', () => dateRangeExtractor.showDialog());
   GM_registerMenuCommand('📦 Daily Delivery Performance', () => deliveryPerformance.toggle());
   GM_registerMenuCommand('🚛 DVIC Check', () => dvicCheck.toggle());
+  GM_registerMenuCommand('⏱ Working Hours', () => workingHoursDashboard.toggle());
   GM_registerMenuCommand('⚙ Einstellungen', openSettings);
   GM_registerMenuCommand('⏸ Skript pausieren', () => {
     config.enabled = false;
