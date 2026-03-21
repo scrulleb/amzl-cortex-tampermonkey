@@ -2418,41 +2418,43 @@
       const uncached = unique.filter((id) => !this._nameCache.has(id));
 
       if (uncached.length > 0) {
+        // Try roster API as fallback (employee API doesn't exist)
         try {
+          const saId = config.serviceAreaId;
+          const today = new Date().toISOString().split('T')[0];
+          const fromDate = this._addDays(today, -30); // last 30 days
+          const url =
+            `https://logistics.amazon.de/scheduling/home/api/v2/rosters` +
+            `?fromDate=${fromDate}&toDate=${today}&serviceAreaId=${saId}`;
+
           const csrf = getCSRFToken();
           const headers = { Accept: 'application/json' };
           if (csrf) headers['anti-csrftoken-a2z'] = csrf;
 
-          // Build query string: ?employeeIds=A&employeeIds=B…
-          const qs = uncached
-            .map((id) => `employeeIds=${encodeURIComponent(id)}`)
-            .join('&');
-
-          const resp = await fetch(
-            `https://logistics.amazon.de/fleet-management/api/employees?${qs}`,
-            { method: 'GET', headers, credentials: 'include' }
-          );
-
+          const resp = await fetch(url, { method: 'GET', headers, credentials: 'include' });
           if (resp.ok) {
             const json = await resp.json();
-            // Tolerate Array or wrapped shapes
-            const list = Array.isArray(json)
-              ? json
-              : (json?.employees || json?.data || json?.results || []);
+            const roster = Array.isArray(json) ? json : json?.data || json?.rosters || [];
 
-            if (Array.isArray(list)) {
-              for (const emp of list) {
-                const id = String(
-                  emp.employeeId ?? emp.id ?? emp.reporterId ?? ''
-                );
-                const name =
-                  emp.name ?? emp.employeeName ?? emp.fullName ?? emp.displayName ?? '';
-                if (id && name) this._nameCache.set(id, name);
+            const processEntries = (entries) => {
+              for (const entry of entries) {
+                if (entry.driverPersonId && entry.driverName) {
+                  this._nameCache.set(String(entry.driverPersonId), entry.driverName);
+                }
+              }
+            };
+
+            if (Array.isArray(roster)) {
+              processEntries(roster);
+            } else if (typeof roster === 'object') {
+              for (const val of Object.values(roster)) {
+                if (Array.isArray(val)) processEntries(val);
               }
             }
+            log('[DVIC] Roster fetch: added', this._nameCache.size, 'names to cache');
           }
         } catch (e) {
-          log('Employee batch lookup failed (non-fatal, IDs used as fallback):', e);
+          log('[DVIC] Roster lookup failed:', e);
         }
       }
 
@@ -2462,6 +2464,12 @@
         result.set(id, this._nameCache.get(id) || id);
       }
       return result;
+    },
+
+    _addDays(dateStr, n) {
+      const d = new Date(dateStr + 'T00:00:00');
+      d.setDate(d.getDate() + n);
+      return d.toISOString().split('T')[0];
     },
 
     // ── Data normalisation ────────────────────────────────
