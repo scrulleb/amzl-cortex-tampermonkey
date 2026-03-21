@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Cortex Tools
 // @namespace    https://github.com/jurib/amzl-cortex-tampermonkey
-// @version      1.2.1
+// @version      1.2.2
 // @description  Produktivitäts-Tools für logistics.amazon.de (Cortex)
 // @author       Juri B.
 // @match        https://logistics.amazon.de/*
@@ -837,9 +837,6 @@
             <a href="#" data-ct-tool="whc-dashboard">📊 WHC Dashboard</a>
           </li>
           <li class="fp-sub-menu-list-item">
-            <a href="#" data-ct-tool="date-extractor">📅 Date Range Extractor</a>
-          </li>
-          <li class="fp-sub-menu-list-item">
             <a href="#" data-ct-tool="delivery-perf">📦 Daily Delivery Performance</a>
           </li>
           <li class="fp-sub-menu-list-item">
@@ -851,7 +848,6 @@
           <li class="fp-sub-menu-list-item">
             <a href="#" data-ct-tool="returns">📦 Returns</a>
           </li>
-          <li class="ct-divider" role="separator"></li>
           <li class="fp-sub-menu-list-item">
             <a href="#" data-ct-tool="settings">⚙ Einstellungen</a>
           </li>
