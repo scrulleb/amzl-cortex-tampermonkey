@@ -32,6 +32,12 @@ Ein Tampermonkey-Userscript, das eine integrierte **„Tools"-Dropdown-Menüleis
 |---|---|
 | **WHC Dashboard** | Arbeitszeitüberwachung (Working Hour Compliance) für Delivery Associates — Tages- und Wochenansicht mit CSV-Export |
 | **Date Range Extractor** | Batch-Datenextraktion aus der Operations API über frei wählbare Datumsbereiche mit Vorschau und Historie |
+| **Daily Delivery Performance** | Tagesaktuelle Lieferperformance-Übersicht für eine Station/DSP |
+| **DVIC Check** | Fahrzeugprüfungs-Dashboard (Daily Vehicle Inspection Check) inkl. optionaler Transporter-Ansicht |
+| **Working Hours Dashboard** | Erweiterte Arbeitszeitauswertung für Fahrer |
+| **Returns Dashboard** | Übersicht über Rücksendungen und Retouren |
+| **Scorecard** | Scorecard-Auswertung für Fahrer und Teams |
+| **VSA QR Codes** | QR-Code-Generierung für VS-Zuweisungen (VSA) |
 
 Das Skript integriert sich nahtlos in die bestehende Cortex-Navigation und erscheint als neuer Menüpunkt **„Tools"** rechts neben „Support".
 
@@ -62,13 +68,17 @@ Das Skript integriert sich nahtlos in die bestehende Cortex-Navigation und ersch
 
 2. **Skript hinzufügen** — Eine der folgenden Methoden verwenden:
 
-   **Option A: Raw-Datei öffnen**
-   - Die Datei `cortex-tools.user.js` im Repository öffnen und auf „Raw" klicken.
+   **Option A: Auto-Install über Release**
+   - Die neueste Version wird automatisch über die `@updateURL` / `@downloadURL` eingespielt, sobald das Skript einmal installiert ist.
+   - Direkter Download: [cortex-tools.user.js (latest release)](https://github.com/scrulleb/amzl-cortex-tampermonkey/releases/latest/download/cortex-tools.user.js)
+
+   **Option B: Raw-Datei öffnen**
+   - Die Datei `cortex-tools/dist/cortex-tools.user.js` im Repository öffnen und auf „Raw" klicken.
    - Tampermonkey erkennt den Userscript-Header automatisch und bietet die Installation an.
 
-   **Option B: Manuell einfügen**
+   **Option C: Manuell einfügen**
    - Tampermonkey-Icon → „Neues Skript erstellen"
-   - Den gesamten Inhalt von `cortex-tools.user.js` einfügen
+   - Den gesamten Inhalt von `cortex-tools/dist/cortex-tools.user.js` einfügen
    - Speichern (`Strg + S`)
 
 3. **Installation bestätigen** — Im Tampermonkey-Installationsdialog auf „Installieren" klicken.
@@ -99,11 +109,24 @@ Nach der Installation erscheint in der Cortex-Navbar (rechts neben „Support") 
 4. **Extraktion starten** — auf „Start" klicken; der Fortschritt wird angezeigt
 5. **Historie** — vergangene Extraktionen können über die History-Ansicht eingesehen werden
 
+### Daily Delivery Performance
+
+1. **Tools → Daily Delivery Performance** auswählen
+2. Station und DSP sind über die Einstellungen vorkonfigurierbar
+3. Tagesaktuelle Performance-Kennzahlen werden im Overlay angezeigt
+
+### DVIC Check
+
+1. **Tools → DVIC Check** auswählen
+2. Übersicht aller fahrzeuggeprüften DAs für den aktuellen Tag
+3. Optional: Transporter-Ansicht über Feature-Toggle aktivierbar
+
 ### Einstellungen
 
 Über **Tools → Settings** (oder Tampermonkey-Kontextmenü → „Einstellungen") lassen sich konfigurieren:
 
 - **Service Area ID** — Die ID des eigenen Service-Gebiets
+- **Delivery Perf Station / DSP** — Vorauswahl für das Delivery Performance Tool
 - **Feature-Toggles** — Einzelne Tools aktivieren/deaktivieren
 - **Dev-Modus** — Erweitertes Logging in der Browser-Konsole
 
@@ -111,23 +134,40 @@ Nach der Installation erscheint in der Cortex-Navbar (rechts neben „Support") 
 
 Rechtsklick auf das Tampermonkey-Icon → „Cortex Tools" zeigt:
 
-- **Einstellungen** — Öffnet den Settings-Dialog
-- **Skript pausieren** — Deaktiviert alle Features bis zum nächsten Reload
+- **📊 WHC Dashboard** — Dashboard öffnen
+- **📅 Date Range Extractor** — Extractor öffnen
+- **📦 Daily Delivery Performance** — Performance-Ansicht öffnen
+- **🚛 DVIC Check** — DVIC-Übersicht öffnen
+- **⏱ Working Hours** — Arbeitszeitauswertung öffnen
+- **📦 Returns Dashboard** — Retouren-Übersicht öffnen
+- **📋 Scorecard** — Scorecard öffnen
+- **📱 VSA QR Codes** — QR-Generator öffnen
+- **⚙ Einstellungen** — Öffnet den Settings-Dialog
+- **⏸ Skript pausieren** — Deaktiviert alle Features bis zum nächsten Reload
 
 ---
 
 ## Konfiguration
 
-Die Konfiguration wird über Tampermonkey-Storage (`GM_getValue`/`GM_setValue`) persistiert:
+Die Konfiguration wird über Tampermonkey-Storage (`GM_getValue`/`GM_setValue`) persistiert (Schlüssel: `ct_config`):
 
 ```js
 {
-  enabled: true,                    // Masterswitch — Skript aktiv?
-  dev: false,                       // Dev-Modus — ausführliches Logging
-  serviceAreaId: 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx',  // Service Area ID
+  enabled: true,                      // Masterswitch — Skript aktiv?
+  dev: false,                         // Dev-Modus — ausführliches Logging
+  serviceAreaId: '',                  // UUID der Service Area für API-Abfragen
+  deliveryPerfStation: '',            // Stations-ID für Delivery Performance
+  deliveryPerfDsp: '',                // DSP-ID für Delivery Performance
   features: {
-    whcDashboard: true,             // WHC Dashboard aktiviert
-    dateRangeExtractor: true        // Date Range Extractor aktiviert
+    whcDashboard: true,               // WHC Dashboard
+    dateExtractor: true,              // Date Range Extractor
+    deliveryPerf: true,               // Daily Delivery Performance
+    dvicCheck: true,                  // DVIC Check
+    dvicShowTransporters: true,       // Transporter-Ansicht im DVIC Check
+    workingHours: true,               // Working Hours Dashboard
+    returnsDashboard: true,           // Returns Dashboard
+    scorecard: true,                  // Scorecard
+    vsaQr: true,                      // VSA QR Codes
   }
 }
 ```
@@ -136,9 +176,18 @@ Die Konfiguration wird über Tampermonkey-Storage (`GM_getValue`/`GM_setValue`) 
 |---|---|---|
 | `enabled` | `boolean` | Masterswitch — bei `false` wird kein Feature geladen |
 | `dev` | `boolean` | Aktiviert ausführliches Logging in der Konsole (`[CortexTools] …`) |
-| `serviceAreaId` | `string` | UUID der Service Area für API-Abfragen (WHC, Operations) |
+| `serviceAreaId` | `string` | UUID der Service Area für API-Abfragen |
+| `deliveryPerfStation` | `string` | Stations-ID für das Delivery Performance Tool |
+| `deliveryPerfDsp` | `string` | DSP-ID für das Delivery Performance Tool |
 | `features.whcDashboard` | `boolean` | WHC Dashboard ein-/ausschalten |
-| `features.dateRangeExtractor` | `boolean` | Date Range Extractor ein-/ausschalten |
+| `features.dateExtractor` | `boolean` | Date Range Extractor ein-/ausschalten |
+| `features.deliveryPerf` | `boolean` | Daily Delivery Performance ein-/ausschalten |
+| `features.dvicCheck` | `boolean` | DVIC Check ein-/ausschalten |
+| `features.dvicShowTransporters` | `boolean` | Transporter-Ansicht im DVIC Check |
+| `features.workingHours` | `boolean` | Working Hours Dashboard ein-/ausschalten |
+| `features.returnsDashboard` | `boolean` | Returns Dashboard ein-/ausschalten |
+| `features.scorecard` | `boolean` | Scorecard ein-/ausschalten |
+| `features.vsaQr` | `boolean` | VSA QR Code Generator ein-/ausschalten |
 
 ---
 
@@ -147,25 +196,51 @@ Die Konfiguration wird über Tampermonkey-Storage (`GM_getValue`/`GM_setValue`) 
 ### Überblick
 
 ```
-cortex-tools.user.js
-├── Config / Storage Layer
-├── Navbar Injection (MutationObserver + fp-navigation-loaded)
-├── Tools Dropdown (DOM-Erzeugung)
-├── Module: WHC Dashboard
-├── Module: Date Range Extractor
-├── Module: Settings
-├── Dispose / Cleanup System
-└── SPA Navigation Listener
+amzl-cortex-tampermonkey/
+├── cortex-tools/                     # TypeScript-Quellcode & Build-System
+│   ├── src/
+│   │   ├── index.ts                  # Entry Point — Bootstrap & GM-Menüregistrierung
+│   │   ├── core/
+│   │   │   ├── api.ts                # CompanyConfig / DSP-Resolver
+│   │   │   ├── storage.ts            # GM_getValue/GM_setValue-Wrapper (typisiert)
+│   │   │   └── utils.ts              # Logging, disposeAll, waitForElement
+│   │   ├── ui/
+│   │   │   ├── components.ts         # Wiederverwendbare UI-Bausteine
+│   │   │   ├── overlay.ts            # Overlay-Basisklasse
+│   │   │   └── styles.ts             # GM_addStyle — zentrales Stylesheet
+│   │   └── features/
+│   │       ├── navbar.ts             # Nav-Injection, SPA-Listener, boot()
+│   │       ├── whc-dashboard.ts      # WHC Dashboard
+│   │       ├── date-extractor.ts     # Date Range Extractor
+│   │       ├── delivery-performance.ts
+│   │       ├── dvic-check.ts
+│   │       ├── working-hours.ts
+│   │       ├── returns-dashboard.ts
+│   │       ├── scorecard.ts
+│   │       ├── vsa-qr.ts
+│   │       └── settings.ts
+│   ├── dist/
+│   │   ├── cortex-tools.user.js      # Fertig gebuildetes Userscript
+│   │   └── cortex-tools.meta.js      # Nur-Header für Auto-Update
+│   ├── userscript.header.js          # Userscript-Metadaten (@name, @grant, …)
+│   ├── esbuild.config.js             # Build-Konfiguration (esbuild)
+│   ├── tsconfig.json
+│   └── package.json
+├── cortex-tools.user.js              # Legacy: alter Monolith (veraltet)
+├── date_range_extractor.js           # Legacy: Standalone Date Range Extractor
+├── whc_dashboard.js                  # Legacy: Standalone WHC Dashboard
+└── tests/                            # Unit-Tests
 ```
 
 ### Design-Entscheidungen
 
-- **Einzelnes Skript** — Alle Tools in einer `.user.js`-Datei, kein Build-Schritt nötig.
+- **Modulares TypeScript** — Quellcode in `src/` ist in Core-, UI- und Feature-Module aufgeteilt; esbuild bündelt alles zu einer einzelnen `.user.js`.
 - **Navbar-Injection** — Erkennung der Navigation über `MutationObserver` und das Cortex-eigene Event `fp-navigation-loaded`. Robuster Fallback bei langsamen Seitenladungen.
-- **Modul-Pattern** — Jedes Tool ist als eigenständiges Modul implementiert (`initWhcDashboard()`, `initDateRangeExtractor()`), das über Feature-Flags gesteuert wird.
+- **Klassen-basierte Module** — Jedes Tool ist als eigene Klasse implementiert (`WhcDashboard`, `DvicCheck`, …) und implementiert ein gemeinsames `toggle()`-Interface.
 - **Dispose-System** — Alle Event-Listener, Observer und DOM-Elemente werden in einem zentralen `disposers`-Array registriert. Bei Routenwechsel oder Deaktivierung wird `disposeAll()` aufgerufen.
 - **SPA-Awareness** — History-API-Patching (`pushState`/`replaceState`) und `popstate`-Listener erkennen Navigationswechsel ohne Page-Reload.
 - **CSS Custom Properties** — Theming über CSS-Variablen, kompatibel mit dem Cortex-Stylesheet.
+- **Auto-Update** — `@updateURL` und `@downloadURL` zeigen auf die GitHub-Releases, sodass Tampermonkey neue Versionen automatisch erkennt.
 
 ---
 
@@ -178,7 +253,7 @@ cortex-tools.user.js
 | `GM_addStyle` | CSS-Injektion ohne Inline-Styles — gesammeltes Stylesheet für alle Tools |
 | `GM_getValue` | Persistente Einstellungen und Batch-Historie aus dem Tampermonkey-Storage laden |
 | `GM_setValue` | Einstellungen, Extraktionsdaten und Historie speichern |
-| `GM_registerMenuCommand` | Tampermonkey-Kontextmenü-Einträge (Einstellungen, Pausieren) |
+| `GM_registerMenuCommand` | Tampermonkey-Kontextmenü-Einträge für alle Tools |
 
 ### Netzwerkzugriff
 
@@ -223,35 +298,42 @@ cortex-tools.user.js
 
 ### Doppelte UI-Elemente
 
-- **Legacy-Skripte deaktivieren** — Wenn `date_range_extractor.js` oder `whc_dashboard.js` parallel zu `cortex-tools.user.js` aktiv sind, entstehen doppelte Menüpunkte. Lösung: Die Standalone-Skripte in Tampermonkey deaktivieren.
+- **Legacy-Skripte deaktivieren** — Wenn `date_range_extractor.js`, `whc_dashboard.js` oder `cortex-tools.user.js` (Monolith) parallel zur aktuellen Version aktiv sind, entstehen doppelte Menüpunkte. Lösung: Veraltete Standalone-Skripte in Tampermonkey deaktivieren.
 
 ---
 
 ## Entwicklung
 
-### Dateistruktur
+### Voraussetzungen
 
+- **Node.js** ≥ 18
+- Abhängigkeiten installieren: `cd cortex-tools && npm install`
+
+### Build
+
+```bash
+# Einmaliger Build (Entwicklung)
+npm run build
+
+# Build mit Watch-Modus
+npm run dev
+
+# Produktions-Build (minifiziert)
+npm run build:prod
+
+# Nur TypeScript prüfen (kein Output)
+npm run typecheck
 ```
-amzl-cortex-tampermonkey/
-├── cortex-tools.user.js          # Haupt-Userscript (alle Tools integriert)
-├── date_range_extractor.js       # Legacy: Standalone Date Range Extractor
-├── whc_dashboard.js              # Legacy: Standalone WHC Dashboard
-├── example.css                   # Referenz: HTML-Struktur der Cortex-Navbar
-├── Screenshot 2026-03-20 *.png   # Screenshots
-├── README.md                     # Diese Datei
-└── CHANGELOG.md                  # (empfohlen)
-```
+
+Das fertige Skript liegt anschließend unter `cortex-tools/dist/cortex-tools.user.js`.
 
 ### Neues Tool hinzufügen
 
-1. Init-Funktion erstellen: `function initMeinTool() { … }`
-2. Dispose-Logik registrieren: `onDispose(() => cleanup())`
-3. Menüeintrag im Dropdown ergänzen (in der Dropdown-Erzeugung)
-4. Feature-Flag hinzufügen: `features.meinTool: true`
-5. Im `boot()`-Flow einbinden:
-   ```js
-   if (config.features.meinTool) initMeinTool();
-   ```
+1. Klasse in `cortex-tools/src/features/mein-tool.ts` erstellen (`toggle()`-Methode implementieren)
+2. In `src/index.ts` importieren und instanziieren
+3. `GM_registerMenuCommand`-Eintrag hinzufügen
+4. Menüeintrag im Navbar-Dropdown ergänzen (`features/navbar.ts`)
+5. Feature-Flag in `core/storage.ts` → `FeaturesConfig` und `DEFAULTS` eintragen
 
 ### Dev-Modus aktivieren
 
@@ -259,7 +341,7 @@ amzl-cortex-tampermonkey/
 
 ```js
 // Tampermonkey-Storage direkt setzen (nur für Debugging)
-GM_setValue('dev', true);
+GM_setValue('ct_config', JSON.stringify({ ...GM_getValue('ct_config', {}), dev: true }));
 ```
 
 Oder über **Tools → Settings → Dev-Modus**.
@@ -278,18 +360,32 @@ Im Dev-Modus werden alle `[CortexTools]`-Logmeldungen in der Konsole ausgegeben.
 
 ## Legacy-Skripte
 
-Die folgenden Dateien sind die **ursprünglichen Standalone-Versionen** der Tools:
+Die folgenden Dateien sind **veraltete Standalone-Versionen** der Tools:
 
 | Datei | Beschreibung | Status |
 |---|---|---|
-| `date_range_extractor.js` | Eigenständiger Date Range Extractor | ⚠️ Veraltet — in `cortex-tools.user.js` integriert |
-| `whc_dashboard.js` | Eigenständiges WHC Dashboard | ⚠️ Veraltet — in `cortex-tools.user.js` integriert |
+| `cortex-tools.user.js` | Monolithisches All-in-One-Userscript (v1.0.0) | ⚠️ Veraltet — durch modulares Build-System ersetzt |
+| `date_range_extractor.js` | Eigenständiger Date Range Extractor | ⚠️ Veraltet — in `cortex-tools/src/features/date-extractor.ts` integriert |
+| `whc_dashboard.js` | Eigenständiges WHC Dashboard | ⚠️ Veraltet — in `cortex-tools/src/features/whc-dashboard.ts` integriert |
 
-> **Wichtig:** Diese Skripte sollten in Tampermonkey **deaktiviert** werden, wenn `cortex-tools.user.js` installiert ist, um doppelte UI-Elemente zu vermeiden. Sie bleiben im Repository als Referenz erhalten.
+> **Wichtig:** Diese Skripte sollten in Tampermonkey **deaktiviert** werden, wenn die aktuelle Version (`cortex-tools/dist/cortex-tools.user.js`) installiert ist, um doppelte UI-Elemente zu vermeiden. Sie bleiben im Repository als Referenz erhalten.
 
 ---
 
 ## Changelog
+
+### [1.3.1] — aktuell
+
+#### Added
+- Working Hours Dashboard
+- Returns Dashboard
+- Scorecard Dashboard
+- VSA QR Code Generator
+- Daily Delivery Performance Tool (mit Station/DSP-Konfiguration)
+- DVIC Check (inkl. optionaler Transporter-Ansicht)
+- Modulares TypeScript-Build-System (esbuild)
+- Auto-Update via `@updateURL` / `@downloadURL` (GitHub Releases)
+- Klassen-basierte Feature-Module mit einheitlichem `toggle()`-Interface
 
 ### [1.0.0] — 2026-03-20
 
