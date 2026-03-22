@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Cortex Tools
-// @namespace    https://github.com/jurib/amzl-cortex-tampermonkey
+// @namespace    https://github.com/scrulleb/amzl-cortex-tampermonkey/tree/refactor/modular-build-system
 // @version      1.3.1
 // @description  Produktivitäts-Tools für logistics.amazon.de (Cortex)
 // @author       Juri B.
