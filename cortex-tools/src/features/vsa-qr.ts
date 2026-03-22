@@ -156,8 +156,12 @@ export class VsaQrGenerator {
       vehicleList = json;
     } else {
       const obj = json as Record<string, unknown>;
-      vehicleList = (obj['vehicles'] || obj['data'] || obj['content'] || []) as unknown[];
-      if (!Array.isArray(vehicleList)) {
+      const known = obj['vehicles'] ?? obj['data'] ?? obj['content'];
+      if (Array.isArray(known) && known.length > 0) {
+        vehicleList = known;
+      } else {
+        // Fallback: scan all values for the first non-empty array
+        vehicleList = [];
         for (const val of Object.values(obj)) {
           if (Array.isArray(val) && val.length > 0) {
             vehicleList = val;
@@ -175,7 +179,10 @@ export class VsaQrGenerator {
         const rec = v as Record<string, unknown>;
         const vin = String(rec['vin'] ?? '').trim();
         const registrationNo = String(rec['registrationNo'] ?? rec['licensePlate'] ?? rec['registration_no'] ?? '').trim();
-        const stationCode = String(rec['stationCode'] ?? rec['station_code'] ?? rec['station'] ?? '').trim();
+        const svcStation = rec['serviceStation'] as Record<string, unknown> | null | undefined;
+        const stationCode = String(
+          rec['stationCode'] ?? svcStation?.['stationCode'] ?? rec['station_code'] ?? rec['station'] ?? '',
+        ).trim();
         const status = String(rec['vehicleStatus'] ?? rec['status'] ?? 'ACTIVE').trim();
         if (!vin) return null;
         return { vin, registrationNo, stationCode, status } as VehicleData;
