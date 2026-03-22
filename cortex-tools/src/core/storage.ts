@@ -9,6 +9,7 @@ export interface FeaturesConfig {
   workingHours: boolean;
   returnsDashboard: boolean;
   scorecard: boolean;
+  vsaQr: boolean;
 }
 
 export interface AppConfig {
@@ -35,6 +36,7 @@ export const DEFAULTS: AppConfig = {
     workingHours: true,
     returnsDashboard: true,
     scorecard: true,
+    vsaQr: true,
   },
 };
 

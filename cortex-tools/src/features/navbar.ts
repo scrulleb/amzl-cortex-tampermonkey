@@ -8,6 +8,7 @@ import type { DvicCheck } from './dvic-check';
 import type { WorkingHoursDashboard } from './working-hours';
 import type { ReturnsDashboard } from './returns-dashboard';
 import type { ScorecardDashboard } from './scorecard';
+import type { VsaQrGenerator } from './vsa-qr';
 
 export interface ToolRegistry {
   whcDashboard: WhcDashboard;
@@ -17,6 +18,7 @@ export interface ToolRegistry {
   workingHoursDashboard: WorkingHoursDashboard;
   returnsDashboard: ReturnsDashboard;
   scorecardDashboard: ScorecardDashboard;
+  vsaQrGenerator: VsaQrGenerator;
   openSettings: () => void;
 }
 
@@ -64,6 +66,10 @@ export function injectNavItem(tools: ToolRegistry): void {
           <a href="#" data-ct-tool="scorecard">📋 Scorecard</a>
         </li>
         <li class="fp-sub-menu-list-item">
+          <a href="#" data-ct-tool="vsa-qr">📱 VSA QR Codes</a>
+        </li>
+        <li class="ct-divider"></li>
+        <li class="fp-sub-menu-list-item">
           <a href="#" data-ct-tool="settings">⚙ Einstellungen</a>
         </li>
       </ul>
@@ -85,6 +91,7 @@ export function injectNavItem(tools: ToolRegistry): void {
           case 'working-hours':  tools.workingHoursDashboard.toggle(); break;
           case 'returns':        tools.returnsDashboard.toggle(); break;
           case 'scorecard':      tools.scorecardDashboard.toggle(); break;
+          case 'vsa-qr':      tools.vsaQrGenerator.toggle(); break;
           case 'settings':       tools.openSettings(); break;
         }
       } catch (ex) {

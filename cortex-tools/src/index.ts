@@ -21,6 +21,7 @@ import { DvicCheck } from './features/dvic-check';
 import { WorkingHoursDashboard } from './features/working-hours';
 import { ReturnsDashboard } from './features/returns-dashboard';
 import { ScorecardDashboard } from './features/scorecard';
+import { VsaQrGenerator } from './features/vsa-qr';
 import { openSettings } from './features/settings';
 import { injectNavItem, watchNavigation, onUrlChange, boot } from './features/navbar';
 
@@ -51,6 +52,7 @@ import { injectNavItem, watchNavigation, onUrlChange, boot } from './features/na
   const workingHoursDashboard = new WorkingHoursDashboard(config, companyConfig);
   const returnsDashboard      = new ReturnsDashboard(config, companyConfig);
   const scorecardDashboard    = new ScorecardDashboard(config, companyConfig);
+  const vsaQrGenerator        = new VsaQrGenerator(config, companyConfig);
 
   // Settings callback must re-read the mutated config object
   const handleOpenSettings = () => {
@@ -67,6 +69,7 @@ import { injectNavItem, watchNavigation, onUrlChange, boot } from './features/na
     workingHoursDashboard,
     returnsDashboard,
     scorecardDashboard,
+    vsaQrGenerator,
     openSettings: handleOpenSettings,
   };
 
@@ -78,6 +81,7 @@ import { injectNavItem, watchNavigation, onUrlChange, boot } from './features/na
   GM_registerMenuCommand('⏱ Working Hours',              () => workingHoursDashboard.toggle());
   GM_registerMenuCommand('📦 Returns Dashboard',          () => returnsDashboard.toggle());
   GM_registerMenuCommand('📋 Scorecard',                  () => scorecardDashboard.toggle());
+  GM_registerMenuCommand('📱 VSA QR Codes',                () => vsaQrGenerator.toggle());
   GM_registerMenuCommand('⚙ Einstellungen',               handleOpenSettings);
   GM_registerMenuCommand('⏸ Skript pausieren', () => {
     config.enabled = false;

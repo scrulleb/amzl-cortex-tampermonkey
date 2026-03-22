@@ -25,6 +25,7 @@ export function openSettings(config: AppConfig): void {
       ${toggleHTML('ct-set-whd',  'Working Hours Dashboard', config.features.workingHours)}
       ${toggleHTML('ct-set-ret',  'Returns Dashboard', config.features.returnsDashboard)}
       ${toggleHTML('ct-set-sc',   'Scorecard', config.features.scorecard)}
+      ${toggleHTML('ct-set-vsa', 'VSA QR Code Generator', config.features.vsaQr)}
       ${toggleHTML('ct-set-dev',  'Dev-Mode (ausführliches Logging)', config.dev)}
 
       <div style="margin-top: 20px; display: flex; gap: 10px; justify-content: flex-end;">
@@ -51,6 +52,7 @@ export function openSettings(config: AppConfig): void {
     config.features.workingHours        = boolVal('ct-set-whd');
     config.features.returnsDashboard    = boolVal('ct-set-ret');
     config.features.scorecard           = boolVal('ct-set-sc');
+    config.features.vsaQr               = boolVal('ct-set-vsa');
     config.dev                          = boolVal('ct-set-dev');
 
     setConfig(config);

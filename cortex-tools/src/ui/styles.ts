@@ -697,6 +697,112 @@ export const CSS_SCORECARD = `
   }
 `;
 
+/** VSA QR Code Generator CSS */
+export const CSS_VSA_QR = `
+  /* ── VSA QR Code Generator ─────────────────────────── */
+  .ct-vsa-panel {
+    background: var(--ct-bg); border-radius: var(--ct-radius-lg);
+    padding: 24px; max-width: 1200px; width: 95vw; max-height: 92vh;
+    overflow-y: auto; box-shadow: var(--ct-shadow-heavy);
+    font-family: var(--ct-font);
+  }
+  .ct-vsa-panel h2 { margin: 0; color: var(--ct-primary); }
+
+  .ct-vsa-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 16px;
+  }
+
+  .ct-vsa-toolbar {
+    display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+  .ct-vsa-search {
+    flex: 1 1 250px; min-width: 200px; padding: 8px 12px;
+    border-radius: 5px; border: 1px solid #ccc; font-size: 13px;
+    font-family: var(--ct-font);
+  }
+  .ct-vsa-search:focus {
+    outline: none; border-color: var(--ct-accent);
+    box-shadow: 0 0 0 2px rgba(255,153,0,0.2);
+  }
+  .ct-vsa-selection-info {
+    font-size: 12px; color: var(--ct-muted); white-space: nowrap;
+  }
+
+  .ct-vsa-tiles {
+    display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px;
+  }
+  .ct-vsa-tile {
+    background: #f7f8fa; border: 1px solid #e0e0e0;
+    border-radius: var(--ct-radius); padding: 10px 18px;
+    text-align: center; flex: 1 1 100px; min-width: 90px;
+  }
+  .ct-vsa-tile-val {
+    font-size: 22px; font-weight: bold; color: var(--ct-primary); line-height: 1.2;
+  }
+  .ct-vsa-tile-lbl { font-size: 10px; color: var(--ct-muted); margin-top: 2px; }
+  .ct-vsa-tile--accent .ct-vsa-tile-val { color: var(--ct-accent); }
+
+  .ct-vsa-table-wrap {
+    overflow-x: auto; -webkit-overflow-scrolling: touch;
+    max-height: 50vh; overflow-y: auto;
+  }
+
+  .ct-vsa-table {
+    width: 100%; border-collapse: collapse; font-size: 12px;
+    font-family: var(--ct-font);
+  }
+  .ct-vsa-table th, .ct-vsa-table td {
+    border: 1px solid var(--ct-border); padding: 6px 8px;
+    text-align: center; white-space: nowrap;
+  }
+  .ct-vsa-table th {
+    background: var(--ct-primary); color: var(--ct-accent);
+    position: sticky; top: 0; z-index: 1;
+  }
+  .ct-vsa-table tr:nth-child(even) { background: #f9f9f9; }
+  .ct-vsa-table tr:hover { background: #fff3d6; }
+  .ct-vsa-th-check, .ct-vsa-td-check { width: 36px; text-align: center; }
+  .ct-vsa-td-vin { font-family: monospace; font-size: 11px; letter-spacing: 0.5px; }
+
+  .ct-vsa-row--selected { background: #fff8e1 !important; }
+  .ct-vsa-row--selected:hover { background: #fff3cd !important; }
+
+  .ct-vsa-status--active { color: var(--ct-success); font-weight: bold; font-size: 11px; }
+  .ct-vsa-status--maintenance { color: var(--ct-warning); font-weight: bold; font-size: 11px; }
+  .ct-vsa-status--pending { color: var(--ct-info); font-weight: bold; font-size: 11px; }
+
+  .ct-vsa-pagination {
+    display: flex; align-items: center; gap: 10px;
+    margin-top: 12px; justify-content: center; font-size: 13px;
+  }
+  .ct-vsa-page-info { color: var(--ct-muted); }
+
+  .ct-vsa-footer {
+    display: flex; align-items: center; gap: 12px;
+    margin-top: 16px; padding-top: 16px;
+    border-top: 1px solid var(--ct-border);
+  }
+  .ct-vsa-selection-badge {
+    font-size: 12px; color: var(--ct-muted); font-weight: 500;
+  }
+
+  .ct-vsa-loading, .ct-vsa-empty {
+    text-align: center; padding: 40px; color: var(--ct-muted); font-style: italic;
+  }
+  .ct-vsa-error {
+    background: #fff0f0; border: 1px solid #ffcccc;
+    border-radius: var(--ct-radius); padding: 14px;
+    color: var(--ct-danger); font-size: 13px;
+  }
+
+  @media (max-width: 768px) {
+    .ct-vsa-panel { min-width: unset; width: 95vw; padding: 16px; }
+    .ct-vsa-table-wrap { max-height: 40vh; }
+  }
+`;
+
 /** Inject all CSS blocks into the page. */
 export function injectStyles(): void {
   GM_addStyle(CSS_BASE);
@@ -705,4 +811,5 @@ export function injectStyles(): void {
   GM_addStyle(CSS_WORKING_HOURS);
   GM_addStyle(CSS_RETURNS);
   GM_addStyle(CSS_SCORECARD);
+  GM_addStyle(CSS_VSA_QR);
 }
