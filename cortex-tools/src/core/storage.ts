@@ -24,9 +24,9 @@ export interface AppConfig {
 export const DEFAULTS: AppConfig = {
   enabled: true,
   dev: false,
-  serviceAreaId: 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx',
-  deliveryPerfStation: 'XYZ1',
-  deliveryPerfDsp: 'TEST',
+  serviceAreaId: '',
+  deliveryPerfStation: '',
+  deliveryPerfDsp: '',
   features: {
     whcDashboard: true,
     dateExtractor: true,

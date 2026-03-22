@@ -24,9 +24,9 @@
   const DEFAULTS = {
     enabled: true,
     dev: false,
-    serviceAreaId: 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx',
-    deliveryPerfStation: 'XYZ1',
-    deliveryPerfDsp: 'TEST',
+    serviceAreaId: '',
+    deliveryPerfStation: '',
+    deliveryPerfDsp: '',
     features: {
       whcDashboard: true,
       dateExtractor: true,
@@ -4097,9 +4097,8 @@
   // ═══════════════════════════════════════════════════════════════════════════
 
   const RETURNS_SERVICE_AREAS = [
-    { id: 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx', name: 'XYZ1' },
-    { id: 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx', name: 'DUS1' },
-    { id: 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx', name: 'FRA1' },
+    // Add your service area IDs and station codes here.
+    // Example: { id: 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx', name: 'STATIONCODE' }
   ];
 
   function retFormatTimestamp(epochMs) {

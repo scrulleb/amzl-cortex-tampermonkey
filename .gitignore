@@ -1,0 +1,18 @@
+# Dependencies
+node_modules/
+
+# Build output – distributed via GitHub Releases, not committed to source
+cortex-tools/dist/
+
+# TypeScript incremental build cache
+cortex-tools/tsconfig.tsbuildinfo
+
+# OS / editor artifacts
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Local environment / secrets (never commit)
+.env
+.env.local
