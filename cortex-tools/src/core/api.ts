@@ -45,61 +45,126 @@ export class CompanyConfig {
   }
 
   private async _doLoad(): Promise<void> {
-    // 1. Load service areas
+    // 1. Load service areas (also extracts DSP from stationCode prefix if possible)
     try {
       const resp = await fetch(
         'https://logistics.amazon.de/account-management/data/get-company-service-areas',
         { credentials: 'include' },
       );
-      const json = await resp.json();
-      if (json.success && Array.isArray(json.data) && json.data.length > 0) {
-        this._serviceAreas = json.data as ServiceArea[];
-        this._defaultServiceAreaId = json.data[0].serviceAreaId;
-        this._defaultStation = json.data[0].stationCode;
-        log('Loaded', json.data.length, 'service areas');
+      if (resp.ok) {
+        const json = await resp.json();
+        // Response may be { success, data: [...] } or { data: [...] } or just [...]
+        const areas: unknown[] = json?.data ?? (Array.isArray(json) ? json : []);
+        if (Array.isArray(areas) && areas.length > 0) {
+          this._serviceAreas = areas as ServiceArea[];
+          this._defaultServiceAreaId = (areas[0] as ServiceArea).serviceAreaId;
+          this._defaultStation = (areas[0] as ServiceArea).stationCode;
+          log('Loaded', areas.length, 'service areas');
+        }
       }
     } catch (e) {
       err('Failed to load service areas:', e);
     }
 
-    // 2. Auto-detect DSP code from company details
-    try {
-      const resp = await fetch(
-        'https://logistics.amazon.de/account-management/data/get-company-details',
-        { credentials: 'include' },
-      );
-      const json = await resp.json();
-      const dsp =
-        json?.data?.dspShortCode ||
-        json?.data?.companyShortCode ||
-        json?.data?.shortCode ||
-        json?.dspShortCode ||
-        null;
-      if (dsp) {
-        this._dspCode = String(dsp).toUpperCase();
-        log('Auto-detected DSP code:', this._dspCode);
-      }
-    } catch {
-      log('Company details not available, will detect DSP from performance data');
+    // 2. Auto-detect DSP code — try multiple known endpoint patterns
+    const COMPANY_ENDPOINTS = [
+      'https://logistics.amazon.de/account-management/data/get-company-details',
+      'https://logistics.amazon.de/account-management/api/company',
+      'https://logistics.amazon.de/account-management/api/v1/company',
+    ];
+    for (const endpoint of COMPANY_ENDPOINTS) {
+      if (this._dspCode) break;
+      try {
+        const resp = await fetch(endpoint, { credentials: 'include' });
+        if (!resp.ok) continue;
+        const json = await resp.json();
+        const dsp =
+          json?.data?.dspShortCode ||
+          json?.data?.companyShortCode ||
+          json?.data?.shortCode ||
+          json?.data?.dspCode ||
+          json?.dspShortCode ||
+          json?.dspCode ||
+          json?.shortCode ||
+          null;
+        if (dsp) {
+          this._dspCode = String(dsp).toUpperCase();
+          log('Auto-detected DSP code from', endpoint, ':', this._dspCode);
+        }
+      } catch { /* try next endpoint */ }
     }
 
-    // 3. Fallback: try extracting from page content
+    // 2b. Fallback for external users: extract companyShortCode from route-summaries API.
+    //     This API is accessible to all user types and carries a `companies` array with
+    //     the DSP's short code — e.g. { companyShortCode: "FOUR", companyType: "DSP" }.
+    if (!this._dspCode && this._defaultServiceAreaId) {
+      try {
+        const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+        const saId = encodeURIComponent(this._defaultServiceAreaId);
+        const resp = await fetch(
+          `https://logistics.amazon.de/operations/execution/api/route-summaries` +
+          `?historicalDay=false&localDate=${today}&serviceAreaId=${saId}&statsFromSummaries=true`,
+          { credentials: 'include' },
+        );
+        if (resp.ok) {
+          const json = await resp.json() as Record<string, unknown>;
+          const companies = json?.companies as Array<Record<string, unknown>> | undefined;
+          if (Array.isArray(companies) && companies.length > 0) {
+            const dspCompany = companies.find(
+              (c) => String(c['companyType']).toUpperCase() === 'DSP',
+            ) ?? companies[0];
+            const shortCode = dspCompany?.['companyShortCode'];
+            if (shortCode && typeof shortCode === 'string' && shortCode.trim()) {
+              this._dspCode = shortCode.trim().toUpperCase();
+              log('DSP code from route-summaries companies:', this._dspCode);
+            }
+          }
+        }
+      } catch (e) {
+        log('route-summaries DSP fallback failed:', e);
+      }
+    }
+
+    // 3. Fallback: try extracting from page DOM elements
     if (!this._dspCode) {
       try {
-        const navEl = document.querySelector(
-          '[data-testid="company-name"], .company-name, .dsp-name',
-        );
-        if (navEl) {
-          const text = navEl.textContent?.trim() ?? '';
-          if (text && text.length <= 10) {
-            this._dspCode = text.toUpperCase();
-            log('DSP code from page element:', this._dspCode);
+        const selectors = [
+          '[data-testid="company-name"]',
+          '[data-testid="dsp-name"]',
+          '.company-name',
+          '.dsp-name',
+          '[aria-label*="DSP"]',
+          // Cortex nav often shows the DSP code in a breadcrumb or header
+          'header [class*="company"]',
+          'nav [class*="company"]',
+        ];
+        for (const sel of selectors) {
+          const el = document.querySelector(sel);
+          if (el) {
+            const text = el.textContent?.trim() ?? '';
+            // DSP codes are typically 3-8 uppercase alphanumeric characters
+            if (text && /^[A-Z0-9]{2,10}$/.test(text)) {
+              this._dspCode = text;
+              log('DSP code from page element:', this._dspCode);
+              break;
+            }
           }
         }
       } catch { /* ignore */ }
     }
 
-    // 4. Final fallback: use the saved config value
+    // 4. Fallback: try extracting DSP from the current URL
+    if (!this._dspCode) {
+      try {
+        const urlMatch = location.href.match(/[?&]dsp=([A-Z0-9]{2,10})/i);
+        if (urlMatch) {
+          this._dspCode = urlMatch[1].toUpperCase();
+          log('DSP code from URL:', this._dspCode);
+        }
+      } catch { /* ignore */ }
+    }
+
+    // 5. Final fallback: use the saved config value
     if (!this._dspCode) {
       this._dspCode = this.config.deliveryPerfDsp || DEFAULTS.deliveryPerfDsp;
       log('Using saved DSP code:', this._dspCode);

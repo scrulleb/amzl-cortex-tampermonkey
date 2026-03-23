@@ -102,15 +102,65 @@ export async function withRetry<T>(
   }
 }
 
-/** Extract the CSRF token from meta tag or cookie. */
+/** Extract the CSRF token from meta tag or cookie.
+ *
+ * Amazon Cortex has used several different token names over time.
+ * We try all known variants in order of preference.
+ */
 export function getCSRFToken(): string | null {
-  const meta = document.querySelector<HTMLMetaElement>('meta[name="anti-csrftoken-a2z"]');
-  if (meta) return meta.getAttribute('content');
+  // 1. Try all known meta tag name variants
+  const META_NAMES = [
+    'anti-csrftoken-a2z',
+    'csrf-token',
+    'csrf',
+    'x-csrf-token',
+    '_csrf',
+    'csrfToken',
+  ];
+  for (const name of META_NAMES) {
+    const meta = document.querySelector<HTMLMetaElement>(`meta[name="${name}"]`);
+    if (meta) {
+      const token = meta.getAttribute('content');
+      if (token) return token;
+    }
+  }
+
+  // 2. Try all known cookie name variants
+  const COOKIE_NAMES = [
+    'anti-csrftoken-a2z',
+    'csrf-token',
+    'csrf',
+    'x-csrf-token',
+    '_csrf',
+    'csrfToken',
+    'session-token',
+  ];
   const cookies = document.cookie.split(';');
   for (const c of cookies) {
-    const [k, v] = c.trim().split('=');
-    if (k === 'anti-csrftoken-a2z') return v;
+    const eqIdx = c.indexOf('=');
+    if (eqIdx === -1) continue;
+    const k = c.slice(0, eqIdx).trim();
+    const v = c.slice(eqIdx + 1).trim();
+    if (COOKIE_NAMES.includes(k) && v) return v;
   }
+
+  // 3. Try extracting from a hidden input field (some Amazon pages use this)
+  const hiddenInput = document.querySelector<HTMLInputElement>(
+    'input[name="anti-csrftoken-a2z"], input[name="csrf-token"], input[name="_csrf"]',
+  );
+  if (hiddenInput?.value) return hiddenInput.value;
+
+  // 4. Try extracting from window.__csrf or similar globals via unsafeWindow
+  try {
+    const w = window as unknown as Record<string, unknown>;
+    const candidates = ['__csrf', 'csrfToken', 'csrf_token', 'antiCsrfToken'];
+    for (const key of candidates) {
+      if (typeof w[key] === 'string' && (w[key] as string).length > 0) {
+        return w[key] as string;
+      }
+    }
+  } catch { /* ignore */ }
+
   return null;
 }
 

@@ -156,16 +156,40 @@ export class VsaQrGenerator {
       vehicleList = json;
     } else {
       const obj = json as Record<string, unknown>;
-      const known = obj['vehicles'] ?? obj['data'] ?? obj['content'];
-      if (Array.isArray(known) && known.length > 0) {
-        vehicleList = known;
+
+      // Try direct array keys first
+      const directArray = obj['vehicles'] ?? obj['content'];
+      if (Array.isArray(directArray) && directArray.length > 0) {
+        vehicleList = directArray;
       } else {
-        // Fallback: scan all values for the first non-empty array
-        vehicleList = [];
-        for (const val of Object.values(obj)) {
-          if (Array.isArray(val) && val.length > 0) {
-            vehicleList = val;
-            break;
+        // 'data' may be an array OR a nested object containing the vehicle list
+        const dataVal = obj['data'];
+        if (Array.isArray(dataVal) && dataVal.length > 0) {
+          vehicleList = dataVal;
+        } else if (dataVal && typeof dataVal === 'object' && !Array.isArray(dataVal)) {
+          // data is an object — look for vehicle arrays inside it
+          const dataObj = dataVal as Record<string, unknown>;
+          const nested = dataObj['vehicles'] ?? dataObj['content'] ?? dataObj['items'] ?? dataObj['results'];
+          if (Array.isArray(nested) && nested.length > 0) {
+            vehicleList = nested;
+          } else {
+            // Scan all values of data for the first non-empty array
+            vehicleList = [];
+            for (const val of Object.values(dataObj)) {
+              if (Array.isArray(val) && val.length > 0) {
+                vehicleList = val;
+                break;
+              }
+            }
+          }
+        } else {
+          // Last resort: scan all top-level values for the first non-empty array
+          vehicleList = [];
+          for (const val of Object.values(obj)) {
+            if (Array.isArray(val) && val.length > 0) {
+              vehicleList = val;
+              break;
+            }
           }
         }
       }
