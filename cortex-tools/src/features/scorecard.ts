@@ -214,6 +214,17 @@ export function scWeeksAgo(n: number): string {
   return `${d.getUTCFullYear()}-W${String(weekNo).padStart(2, '0')}`;
 }
 
+export function scGenerateWeekOptions(): Array<{ value: string; label: string }> {
+  const options: Array<{ value: string; label: string }> = [];
+  // Amazon provides data going back exactly 1 year (52 weeks)
+  for (let i = 52; i >= 0; i--) {
+    const isoWeek = scWeeksAgo(i);
+    const [yearStr, wStr] = isoWeek.split('-W');
+    options.push({ value: isoWeek, label: `Week ${parseInt(wStr, 10)} ${yearStr}` });
+  }
+  return options;
+}
+
 function _scImgKpiColor(value: number, type: string): string {
   switch (type) {
     case 'DCR':     return value < 97 ? 'rgb(235,50,35)' : value < 98.5 ? 'rgb(223,130,68)' : value < 99.5 ? 'rgb(126,170,85)' : 'rgb(77,115,190)';
@@ -245,9 +256,10 @@ export class ScorecardDashboard {
   private _currentSort = { field: 'totalScore', dir: 'desc' };
   private _currentPage = 0;
   private _pageSize = 50;
+  private _openRowIdx: number | null = null;
 
   /** Expose pure helpers for unit testing */
-  readonly helpers = { scConvertToDecimal, scParseRow, scCalculateScore, scKpiClass, scStatusClass, scParseApiResponse, scValidateWeek, scCurrentWeek, scWeeksAgo };
+  readonly helpers = { scConvertToDecimal, scParseRow, scCalculateScore, scKpiClass, scStatusClass, scParseApiResponse, scValidateWeek, scCurrentWeek, scWeeksAgo, scGenerateWeekOptions };
 
   constructor(
     private readonly config: AppConfig,
@@ -260,6 +272,10 @@ export class ScorecardDashboard {
     if (this._overlayEl) return;
 
     const curWeek = scCurrentWeek();
+    const weekOptions = scGenerateWeekOptions();
+    const weekOptionsHtml = weekOptions
+      .map((o) => `<option value="${esc(o.value)}"${o.value === curWeek ? ' selected' : ''}>${esc(o.label)}</option>`)
+      .join('');
     const overlay = document.createElement('div');
     overlay.id = 'ct-sc-overlay';
     overlay.className = 'ct-overlay';
@@ -271,7 +287,7 @@ export class ScorecardDashboard {
         <h2>📋 Scorecard</h2>
         <div class="ct-controls">
           <label for="ct-sc-week">Week:</label>
-          <input type="text" id="ct-sc-week" class="ct-input" value="${curWeek}" placeholder="YYYY-Www" maxlength="8" style="width:100px">
+          <select id="ct-sc-week" class="ct-input" style="min-width:160px">${weekOptionsHtml}</select>
           <label for="ct-sc-sa">Service Area:</label>
           <select id="ct-sc-sa" class="ct-input"><option value="">Wird geladen…</option></select>
           <button class="ct-btn ct-btn--accent" id="ct-sc-go">🔍 Fetch</button>
@@ -320,7 +336,7 @@ export class ScorecardDashboard {
     this.init();
     this._overlayEl!.classList.add('visible');
     this._active = true;
-    (document.getElementById('ct-sc-week') as HTMLInputElement).focus();
+    (document.getElementById('ct-sc-week') as HTMLSelectElement).focus();
   }
 
   hide(): void {
@@ -362,7 +378,7 @@ export class ScorecardDashboard {
   // ── Trigger ────────────────────────────────────────────────────────────────
 
   private async _triggerFetch(): Promise<void> {
-    const week = (document.getElementById('ct-sc-week') as HTMLInputElement).value.trim();
+    const week = (document.getElementById('ct-sc-week') as HTMLSelectElement).value.trim();
     const validErr = scValidateWeek(week);
     if (validErr) { this._setStatus('⚠️ ' + validErr); return; }
 
@@ -396,6 +412,7 @@ export class ScorecardDashboard {
       calculated.sort((a, b) => b.totalScore - a.totalScore);
       this._calculatedData = calculated;
       this._currentPage = 0;
+      this._openRowIdx = null;
       this._currentSort = { field: 'totalScore', dir: 'desc' };
       this._renderAll();
       this._setStatus(`✅ ${calculated.length} record(s) loaded — ${week}`);
@@ -435,10 +452,13 @@ export class ScorecardDashboard {
 
     const sortArrow = (field: string) => this._currentSort.field !== field ? '' : this._currentSort.dir === 'asc' ? ' ▲' : ' ▼';
 
+    const colCount = 12;
     const rowsHtml = pageData.map((row, i) => {
-      const place = start + i + 1;
+      const globalIdx = start + i;
+      const place = globalIdx + 1;
       const sClass = scStatusClass(row.status);
-      return `<tr>
+      const isOpen = this._openRowIdx === globalIdx;
+      const dataRow = `<tr class="ct-sc-data-row${isOpen ? ' ct-sc-row--selected' : ''}" data-row-idx="${globalIdx}" style="cursor:pointer" title="Click to manage this entry">
         <td>${place}</td>
         <td title="${esc(row.transporterId)}">${esc(row.daName || row.transporterId)}</td>
         <td class="ct-sc-status--${sClass}">${esc(row.status)}</td>
@@ -452,6 +472,16 @@ export class ScorecardDashboard {
         <td class="ct-sc-color--${scKpiClass(parseFloat(row.ce), 'CE')}">${parseInt(row.ce, 10)}</td>
         <td class="ct-sc-color--${scKpiClass(parseFloat(row.cdfDpmo), 'CDFDPMO')}">${parseInt(row.cdfDpmo, 10)}</td>
       </tr>`;
+      const actionRow = `<tr class="ct-sc-action-row${isOpen ? ' ct-sc-action-row--open' : ''}" data-action-for="${globalIdx}">
+        <td colspan="${colCount}" class="ct-sc-action-cell">
+          <div class="ct-sc-action-inner">
+            <span class="ct-sc-action-label">⚠️ Delete <strong>${esc(row.daName || row.transporterId)}</strong> from this view?</span>
+            <button class="ct-btn ct-sc-btn-delete" data-delete-idx="${globalIdx}">🗑 Delete</button>
+            <button class="ct-btn ct-btn--secondary ct-sc-btn-cancel" data-cancel-idx="${globalIdx}">Cancel</button>
+          </div>
+        </td>
+      </tr>`;
+      return dataRow + actionRow;
     }).join('');
 
     const tableHtml = `
@@ -490,12 +520,42 @@ export class ScorecardDashboard {
         if (field === 'place') return;
         if (this._currentSort.field === field) this._currentSort.dir = this._currentSort.dir === 'asc' ? 'desc' : 'asc';
         else this._currentSort = { field, dir: 'desc' };
-        this._sortData(); this._currentPage = 0; this._renderAll();
+        this._sortData(); this._currentPage = 0; this._openRowIdx = null; this._renderAll();
       });
     });
 
-    document.querySelector('.ct-sc-page-prev')?.addEventListener('click', () => { this._currentPage--; this._renderAll(); });
-    document.querySelector('.ct-sc-page-next')?.addEventListener('click', () => { this._currentPage++; this._renderAll(); });
+    document.querySelectorAll<HTMLElement>('.ct-sc-data-row').forEach((tr) => {
+      tr.addEventListener('click', () => {
+        const idx = parseInt(tr.getAttribute('data-row-idx')!, 10);
+        this._openRowIdx = this._openRowIdx === idx ? null : idx;
+        this._renderAll();
+      });
+    });
+
+    document.querySelectorAll<HTMLElement>('.ct-sc-btn-delete').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const idx = parseInt(btn.getAttribute('data-delete-idx')!, 10);
+        this._calculatedData.splice(idx, 1);
+        this._openRowIdx = null;
+        if (this._currentPage > 0 && this._currentPage * this._pageSize >= this._calculatedData.length) {
+          this._currentPage--;
+        }
+        this._renderAll();
+        this._setStatus(`🗑 Entry removed. ${this._calculatedData.length} record(s) remaining.`);
+      });
+    });
+
+    document.querySelectorAll<HTMLElement>('.ct-sc-btn-cancel').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this._openRowIdx = null;
+        this._renderAll();
+      });
+    });
+
+    document.querySelector('.ct-sc-page-prev')?.addEventListener('click', () => { this._currentPage--; this._openRowIdx = null; this._renderAll(); });
+    document.querySelector('.ct-sc-page-next')?.addEventListener('click', () => { this._currentPage++; this._openRowIdx = null; this._renderAll(); });
   }
 
   private _sortData(): void {
@@ -518,7 +578,7 @@ export class ScorecardDashboard {
     try {
       const SCALE = 2, FONT = 'Arial, sans-serif', FONT_SZ = 12, HEAD_SZ = 11, PAD_X = 8, PAD_Y = 6;
       const ROW_H = FONT_SZ + PAD_Y * 2, HEAD_H = HEAD_SZ + PAD_Y * 2, TITLE_H = 32;
-      const week = (document.getElementById('ct-sc-week') as HTMLInputElement)?.value || '';
+      const week = (document.getElementById('ct-sc-week') as HTMLSelectElement)?.value || '';
       const COLS = [
         { label: '#',         w: 36,  get: (_r: CalculatedRow, i: number) => String(i + 1), color: undefined as undefined | ((r: CalculatedRow) => string) },
         { label: 'DA',        w: 180, get: (r: CalculatedRow) => r.daName || r.transporterId, color: undefined },
@@ -603,7 +663,7 @@ export class ScorecardDashboard {
     const blob = new Blob(['\uFEFF' + csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = `scorecard_${(document.getElementById('ct-sc-week') as HTMLInputElement)?.value || 'data'}.csv`;
+    a.href = url; a.download = `scorecard_${(document.getElementById('ct-sc-week') as HTMLSelectElement)?.value || 'data'}.csv`;
     a.click(); URL.revokeObjectURL(url);
     this._setStatus('✅ CSV exported.');
   }

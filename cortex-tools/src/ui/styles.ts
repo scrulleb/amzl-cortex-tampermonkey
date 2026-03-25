@@ -666,6 +666,27 @@ export const CSS_SCORECARD = `
   .ct-sc-table th:hover { background: #37475a; }
   .ct-sc-table tr:nth-child(even) { background: #f9f9f9; }
   .ct-sc-table tr:hover { background: #fff3d6; }
+  .ct-sc-row--selected { background: #fff3d6 !important; outline: 2px solid var(--ct-accent); outline-offset: -2px; }
+  .ct-sc-data-row { cursor: pointer; }
+
+  .ct-sc-action-row { display: none; }
+  .ct-sc-action-row--open { display: table-row; }
+  .ct-sc-action-cell { padding: 0 !important; border-top: none !important; background: #fffaf0; }
+  .ct-sc-action-inner {
+    display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+    animation: ct-sc-slide-down 0.18s ease-out;
+    border-left: 3px solid var(--ct-danger);
+  }
+  @keyframes ct-sc-slide-down {
+    from { opacity: 0; transform: translateY(-6px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .ct-sc-action-label { flex: 1; font-size: 12px; color: #555; }
+  .ct-sc-btn-delete {
+    background: var(--ct-danger); color: #fff; border: none;
+    padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 12px;
+  }
+  .ct-sc-btn-delete:hover { background: #b52020; }
 
   .ct-sc-status--poor { color: rgb(235, 50, 35); font-weight: bold; }
   .ct-sc-status--fair { color: rgb(223, 130, 68); font-weight: bold; }
