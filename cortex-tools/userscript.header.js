@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Cortex Tools
 // @namespace    https://github.com/scrulleb/amzl-cortex-tampermonkey
-// @version      1.3.2
+// @version      1.3.3
 // @description  Produktivitäts-Tools für logistics.amazon.de (Cortex)
 // @author       Juri
 // @match        https://logistics.amazon.de/*
