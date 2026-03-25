@@ -78,6 +78,7 @@ import { injectNavItem, watchNavigation, onUrlChange, boot } from './features/na
   GM_registerMenuCommand('📅 Date Range Extractor',       () => dateRangeExtractor.showDialog());
   GM_registerMenuCommand('📦 Daily Delivery Performance', () => deliveryPerformance.toggle());
   GM_registerMenuCommand('🚛 DVIC Check',                 () => dvicCheck.toggle());
+  GM_registerMenuCommand('🚛 DVIC Post-Trip einreichen',  () => dvicCheck.showMissing());
   GM_registerMenuCommand('⏱ Working Hours',              () => workingHoursDashboard.toggle());
   GM_registerMenuCommand('📦 Returns Dashboard',          () => returnsDashboard.toggle());
   GM_registerMenuCommand('📋 Scorecard',                  () => scorecardDashboard.toggle());

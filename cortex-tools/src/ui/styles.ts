@@ -360,6 +360,40 @@ export const CSS_DVIC = `
   }
   .ct-dvic-expand-btn:hover { background: #e7f3ff; }
 
+  /* DVIC Submit buttons */
+  .ct-dvic-submit-btn {
+    padding: 4px 10px;
+    font-size: 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+    min-width: 90px;
+  }
+  .ct-dvic-submit-btn--loading {
+    opacity: 0.7;
+    cursor: wait;
+  }
+  .ct-dvic-submit-btn--success {
+    background: #059669 !important;
+    color: #fff !important;
+    border-color: #059669 !important;
+    cursor: default;
+  }
+  .ct-dvic-submit-btn--error {
+    background: #dc2626 !important;
+    color: #fff !important;
+    border-color: #dc2626 !important;
+    cursor: default;
+  }
+  .ct-dvic-bulk-submit {
+    margin-left: 8px;
+  }
+  .ct-dvic-bulk-submit:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
   .ct-dvic-detail-row { display: none; }
   .ct-dvic-detail-row.visible { display: table-row; }
   .ct-dvic-detail-cell {

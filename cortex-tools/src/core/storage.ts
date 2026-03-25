@@ -6,6 +6,7 @@ export interface FeaturesConfig {
   deliveryPerf: boolean;
   dvicCheck: boolean;
   dvicShowTransporters: boolean;
+  dvicAutoSubmit: boolean;
   workingHours: boolean;
   returnsDashboard: boolean;
   scorecard: boolean;
@@ -33,6 +34,7 @@ export const DEFAULTS: AppConfig = {
     deliveryPerf: true,
     dvicCheck: true,
     dvicShowTransporters: true,
+    dvicAutoSubmit: true,
     workingHours: true,
     returnsDashboard: true,
     scorecard: true,

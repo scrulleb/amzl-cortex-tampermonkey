@@ -1,6 +1,6 @@
 {
   "name": "cortex-tools",
-  "version": "1.3.3",
+  "version": "1.4.1",
   "description": "Produktivitäts-Tools für logistics.amazon.de (Cortex)",
   "private": true,
   "scripts": {

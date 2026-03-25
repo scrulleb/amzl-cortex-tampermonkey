@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] - 2026-03-25
+
+### Fixed
+- **DVIC Post-Trip Auto-Submit – vehicle asset ID resolution**: Replaced the broken 3-endpoint fallback chain (which used speculative URLs that don't exist) and the `window.prompt` last-resort with a reliable batch-fetch approach. The fix calls `GET /fleet-management/api/vehicles?vehicleStatuses=ACTIVE,MAINTENANCE,PENDING` — the same proven endpoint used by the VSA QR Code feature — which returns the `assetId` per vehicle. The asset ID cache is now pre-populated during `_refresh()` so submit buttons can resolve IDs without any network round-trips on the critical path. If a vehicle is unexpectedly not in the cache, a single on-demand re-fetch is attempted; if still not found, a descriptive inline error is surfaced instead of a manual prompt.
+
+## [1.4.0] - 2026-03-25
+
+### Added
+- **DVIC Post-Trip Auto-Submit**: New menu option "🚛 DVIC Post-Trip einreichen" to manually submit post-trip DVIC inspection reports directly from the DVIC Check dashboard
+- Per-vehicle "▶ Einreichen" submit buttons in the Missing DVICs tab
+- "🔄 Alle fehlenden einreichen" bulk submit button for submitting all missing post-trip DVICs at once
+- Automatic pre-population of reporterId from the corresponding pre-trip DVIC submission
+- Fallback prompt for manual reporterId entry when no pre-trip reporter is found
+- Vehicle asset ID auto-resolution with multi-endpoint fallback and caching (replaced in v1.4.1 fix)
+- `dvicAutoSubmit` feature flag in settings to enable/disable the auto-submit functionality
+- 4-step API pipeline: upload template → dummy PNG upload → document metadata → inspection submission
+
+### Changed
+- DVIC Check Missing tab now includes an Action column with submit controls (when auto-submit is enabled)
+
 ## [1.3.3] - 2026-03-25
 
 ### Added

@@ -22,6 +22,7 @@ export function openSettings(config: AppConfig): void {
       ${toggleHTML('ct-set-dp',   'Daily Delivery Performance', config.features.deliveryPerf)}
       ${toggleHTML('ct-set-dvic', 'DVIC Check', config.features.dvicCheck)}
       ${toggleHTML('ct-set-dvic-tp', 'DVIC: Transporter-Spalte', config.features.dvicShowTransporters)}
+      ${toggleHTML('ct-set-dvic-as', 'DVIC: Auto-Submit (Post-Trip)', config.features.dvicAutoSubmit)}
       ${toggleHTML('ct-set-whd',  'Working Hours Dashboard', config.features.workingHours)}
       ${toggleHTML('ct-set-ret',  'Returns Dashboard', config.features.returnsDashboard)}
       ${toggleHTML('ct-set-sc',   'Scorecard', config.features.scorecard)}
@@ -49,6 +50,7 @@ export function openSettings(config: AppConfig): void {
     config.features.deliveryPerf        = boolVal('ct-set-dp');
     config.features.dvicCheck           = boolVal('ct-set-dvic');
     config.features.dvicShowTransporters = boolVal('ct-set-dvic-tp');
+    config.features.dvicAutoSubmit       = boolVal('ct-set-dvic-as');
     config.features.workingHours        = boolVal('ct-set-whd');
     config.features.returnsDashboard    = boolVal('ct-set-ret');
     config.features.scorecard           = boolVal('ct-set-sc');

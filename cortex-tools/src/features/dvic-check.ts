@@ -12,6 +12,31 @@ import type { AppConfig as AppConfigType } from '../core/storage';
 import { setConfig } from '../core/storage';
 import type { CompanyConfig } from '../core/api';
 
+interface UploadTemplate {
+  'AX-Signature': string;
+  'AX-SessionID': string;
+  'AX-DocumentDisposition': string;
+  filenames: string[];
+  action: string;
+  token: string;
+}
+
+interface InspectionPayload {
+  inspectionStartTime: number;
+  inspectionType: 'POST_TRIP_DVIC';
+  VIN: string;
+  defectsFound: never[];
+  paperInspectionDocId: string;
+  reporterId: string;
+  serviceAreaId: string;
+}
+
+interface SubmitResult {
+  vehicleIdentifier: string;
+  success: boolean;
+  error?: string;
+}
+
 interface VehicleRecord {
   vehicleIdentifier: string;
   preTripTotal: number;
@@ -45,6 +70,8 @@ export class DvicCheck {
   private _pageVsa = 1;
   private _currentTab: 'all' | 'missing' | 'vsa' = 'all';
   private _vsaInspections: VsaRecord[] = [];
+  private _assetIdCache = new Map<string, string>();
+  private _submitting = false;
 
   get _showTransporters(): boolean {
     return this.config.features.dvicShowTransporters !== false;
@@ -123,6 +150,19 @@ export class DvicCheck {
     }
     this.init();
     if (this._active) this.hide(); else this.show();
+  }
+
+  /** Open the overlay directly on the Missing tab */
+  showMissing(): void {
+    this.init();
+    this._overlayEl!.classList.add('visible');
+    this._active = true;
+    this._pageCurrent = 1;
+    this._pageMissing = 1;
+    this._pageVsa = 1;
+    this._currentTab = 'missing';
+    this._switchTab('missing');
+    this._refresh();
   }
 
   show(): void {
@@ -459,6 +499,10 @@ export class DvicCheck {
         }
       } catch (_) { /* non-fatal diagnostic */ }
 
+      // Pre-populate the VIN → assetId cache so submit buttons work without
+      // a separate per-vehicle API call on the critical path.
+      this._fetchVehicleAssetIds().catch((e) => log('[DVIC] Asset ID pre-fetch error:', e));
+
       let vehicles: VehicleRecord[];
       let vsaInspections: VsaRecord[];
       try {
@@ -638,30 +682,39 @@ export class DvicCheck {
     const start = (page - 1) * this._pageSize;
     const slice = missing.slice(start, start + this._pageSize);
     const showTp = this._showTransporters;
+    const showSubmit = this.config.features.dvicAutoSubmit === true;
 
     const rows = slice.map((v) => {
       const tpCell = showTp ? `<td class="ct-dvic-tp-cell">${this._renderTransporterNames(v)}</td>` : '';
+      const submitCell = showSubmit
+        ? `<td><button class="ct-btn ct-btn--submit ct-dvic-submit-btn" data-vin="${esc(v.vehicleIdentifier)}" ${this._submitting ? 'disabled' : ''}>▶ Einreichen</button></td>`
+        : '';
       return `<tr class="ct-dvic-row--missing" role="row">
         <td>${esc(v.vehicleIdentifier)}</td>
         <td>${v.preTripTotal}</td><td>${v.postTripTotal}</td>
         <td><strong>${v.missingCount}</strong></td>
-        ${tpCell}
+        ${tpCell}${submitCell}
       </tr>`;
     }).join('');
 
     const tpToggleLabel = showTp ? 'Transporter ausblenden' : 'Transporter einblenden';
     const tpHeader = showTp ? `<th scope="col" class="ct-dvic-tp-th">Transporter</th>` : '';
+    const submitHeader = showSubmit ? `<th scope="col">Aktion</th>` : '';
+    const bulkBtn = showSubmit
+      ? `<button class="ct-btn ct-btn--accent ct-dvic-bulk-submit" id="ct-dvic-bulk-submit" ${this._submitting ? 'disabled' : ''}>🔄 Alle fehlenden einreichen</button>`
+      : '';
 
     this._setBody(`
       <div role="tabpanel" aria-labelledby="ct-dvic-tab-missing">
         <div class="ct-dvic-toolbar">
           <button class="ct-dvic-tp-toggle ct-btn" id="ct-dvic-tp-toggle" aria-pressed="${showTp}">👤 ${tpToggleLabel}</button>
+          ${bulkBtn}
         </div>
         <table class="ct-table ct-dvic-table" role="grid">
           <thead><tr>
             <th scope="col">Fahrzeug</th>
             <th scope="col">Pre-Trip ✓</th><th scope="col">Post-Trip ✓</th>
-            <th scope="col">Fehlend</th>${tpHeader}
+            <th scope="col">Fehlend</th>${tpHeader}${submitHeader}
           </tr></thead>
           <tbody>${rows}</tbody>
         </table>
@@ -673,7 +726,383 @@ export class DvicCheck {
       setConfig(this.config);
       this._renderBody();
     });
+
+    if (showSubmit) {
+      document.querySelectorAll('.ct-dvic-submit-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const vin = (btn as HTMLElement).dataset['vin']!;
+          const vehicle = missing.find((v) => v.vehicleIdentifier === vin);
+          if (vehicle) this._handleSingleSubmit(vehicle, btn as HTMLButtonElement);
+        });
+      });
+      document.getElementById('ct-dvic-bulk-submit')?.addEventListener('click', () => {
+        this._handleBulkSubmit();
+      });
+    }
+
     this._attachPaginationHandlers('missing');
+  }
+
+  // ── DVIC Auto-Submit helpers ───────────────────────────────────────────────
+
+  private _createDummyPNG(): Promise<File> {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1;
+    canvas.height = 1;
+    return new Promise((resolve, reject) => {
+      canvas.toBlob((blob) => {
+        if (!blob) return reject(new Error('Failed to create PNG blob'));
+        resolve(new File([blob], 'inspection-report.png', { type: 'image/png' }));
+      }, 'image/png');
+    });
+  }
+
+  private async _getUploadTemplate(): Promise<UploadTemplate> {
+    const csrf = getCSRFToken();
+    const headers: Record<string, string> = { Accept: 'application/json' };
+    if (csrf) headers['anti-csrftoken-a2z'] = csrf;
+
+    const resp = await withRetry(async () => {
+      const r = await fetch(
+        'https://logistics.amazon.de/document/api/v2/template?docClass=PaperInspectionReport&numFiles=1&numCSVFiles=0&clientAppId=FleetMgmt',
+        { method: 'GET', headers, credentials: 'include' },
+      );
+      if (!r.ok) throw new Error(`HTTP ${r.status}: ${r.statusText}`);
+      return r;
+    }, { retries: 3, baseMs: 500 });
+
+    return resp.json() as Promise<UploadTemplate>;
+  }
+
+  private async _uploadDummyFile(template: UploadTemplate, file: File): Promise<string> {
+    const csrf = getCSRFToken();
+    const headers: Record<string, string> = { Accept: 'application/json' };
+    if (csrf) headers['anti-csrftoken-a2z'] = csrf;
+
+    const formData = new FormData();
+    formData.append('_utf8_enable', '✓');
+    formData.append('AX-SessionID', template['AX-SessionID']);
+    formData.append('AX-DocumentDisposition', template['AX-DocumentDisposition']);
+    formData.append('AX-Signature', template['AX-Signature']);
+    formData.append(template.filenames[0], file);
+
+    const isAbsolute = /^https?:\/\//i.test(template.action);
+    const uploadUrl = isAbsolute ? template.action : `https://logistics.amazon.de${template.action}`;
+
+    const resp = await withRetry(async () => {
+      const r = await fetch(uploadUrl, {
+        method: 'POST',
+        headers,
+        body: formData,
+        credentials: 'include',
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}: ${r.statusText}`);
+      return r;
+    }, { retries: 3, baseMs: 500 });
+
+    const rawText = await resp.text();
+    // Alexandria responses may have leading whitespace and a while(1); anti-hijack prefix
+    const text = rawText.trim();
+    const json = JSON.parse(text.replace(/^while\(1\);/, '')) as Record<string, unknown>;
+    const content = (json['content'] as Record<string, unknown>)?.['documentUploadResponseList'] as Record<string, unknown>;
+    const fileEntry = content?.[template.filenames[0]] as Record<string, unknown>;
+    const documentId = (fileEntry?.['content'] as Record<string, unknown>)?.['documentId'] as string;
+    if (!documentId) throw new Error('documentId not found in upload response');
+    return documentId;
+  }
+
+  private async _setDocumentMetadata(vehicleAssetId: string, documentId: string, token: string): Promise<string> {
+    const csrf = await this._getCSRF();
+    const headers: Record<string, string> = { 'Content-Type': 'application/json', Accept: 'application/json' };
+    if (csrf) headers['anti-csrftoken-a2z'] = csrf;
+
+    const doubleEncodedToken = encodeURIComponent(token);
+    const url = `https://logistics.amazon.de/document/api/v1/metadata?clientAppId=FleetMgmt&token=${doubleEncodedToken}`;
+
+    const body = JSON.stringify({
+      docSubjectId: vehicleAssetId,
+      docClass: 'PaperInspectionReport',
+      docSubjectType: 'Vehicle',
+      files: [{ title: 'inspection-report.png', storeToken: documentId, fileStore: 'Alexandria' }],
+    });
+
+    const resp = await withRetry(async () => {
+      const r = await fetch(url, { method: 'POST', headers, body, credentials: 'include' });
+      if (!r.ok) throw new Error(`HTTP ${r.status}: ${r.statusText}`);
+      return r;
+    }, { retries: 3, baseMs: 500 });
+
+    const json = await resp.json() as Record<string, unknown>;
+    const docInstanceId = json['docInstanceId'] as string;
+    if (!docInstanceId) throw new Error('docInstanceId not found in metadata response');
+    return docInstanceId;
+  }
+
+  /**
+   * Returns the anti-CSRF token. Tries the current document first (meta/cookie/global),
+   * then falls back to fetching the fleet-management page HTML to extract the
+   * <meta name="anti-csrftoken-a2z"> value — necessary when the user is on a Cortex
+   * route (e.g. /performance) that doesn't embed the token in the current DOM.
+   */
+  private async _getCSRF(): Promise<string | null> {
+    // Fast path: token available in current document
+    const local = getCSRFToken();
+    if (local) return local;
+
+    // Slow path: fetch fleet-management page to extract the meta tag
+    log('[DVIC] CSRF not in current page — fetching from fleet-management');
+    try {
+      const resp = await fetch('https://logistics.amazon.de/fleet-management/', {
+        credentials: 'include',
+        headers: { Accept: 'text/html' },
+      });
+      if (!resp.ok) return null;
+      const html = await resp.text();
+      const m = html.match(/<meta\s+name=["']anti-csrftoken-a2z["']\s+content=["']([^"']+)["']/i);
+      if (m?.[1]) { log('[DVIC] CSRF extracted from fleet-management page'); return m[1]; }
+      // Broader pattern — token may also appear in inline JSON/script
+      const m2 = html.match(/anti-csrftoken-a2z['":\s]+['"]([A-Za-z0-9+/=]+)['"]/);
+      if (m2?.[1] && m2[1].length > 10) { log('[DVIC] CSRF extracted from fleet-management page (broad pattern)'); return m2[1]; }
+    } catch (e) {
+      log('[DVIC] Failed to fetch CSRF from fleet-management:', e);
+    }
+    return null;
+  }
+
+  private async _submitInspection(payload: InspectionPayload): Promise<unknown> {
+    const csrf = await this._getCSRF();
+    const headers: Record<string, string> = { 'Content-Type': 'application/json', Accept: 'application/json' };
+    if (csrf) headers['anti-csrftoken-a2z'] = csrf;
+
+    const resp = await withRetry(async () => {
+      const r = await fetch('https://logistics.amazon.de/fleet-management/api/inspections', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+        credentials: 'include',
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}: ${r.statusText}`);
+      return r;
+    }, { retries: 3, baseMs: 500 });
+
+    return resp.json();
+  }
+
+  /**
+   * Fetches ALL active fleet vehicles from the known-good endpoint used by the
+   * VSA QR feature and populates _assetIdCache for every vehicle.
+   *
+   * Endpoint: GET /fleet-management/api/vehicles?vehicleStatuses=ACTIVE,MAINTENANCE,PENDING
+   * The response is the authoritative source for vehicleIdentifier → assetId mapping.
+   * Called once during _refresh() so the cache is populated before any submit attempt.
+   */
+  private async _fetchVehicleAssetIds(): Promise<void> {
+    const url = 'https://logistics.amazon.de/fleet-management/api/vehicles?vehicleStatuses=ACTIVE,MAINTENANCE,PENDING';
+    const csrf = getCSRFToken();
+    const headers: Record<string, string> = { Accept: 'application/json' };
+    if (csrf) headers['anti-csrftoken-a2z'] = csrf;
+
+    let json: unknown;
+    try {
+      const r = await fetch(url, { method: 'GET', headers, credentials: 'include' });
+      if (!r.ok) throw new Error(`HTTP ${r.status}: ${r.statusText}`);
+      json = await r.json();
+    } catch (e) {
+      log('[DVIC] Vehicle asset ID pre-fetch failed (submit will attempt on-demand):', e);
+      return;
+    }
+
+    // Normalise the response — the fleet vehicles API returns:
+    //   { "meta": null, "data": { "vehicles": [ { "assetId": "aaid_...", "vin": "...", ... } ] } }
+    // We also handle flat shapes (direct array, or direct vehicles/data array) for resilience.
+    let vehicleList: unknown[] = [];
+    if (Array.isArray(json)) {
+      vehicleList = json;
+    } else if (json && typeof json === 'object') {
+      const obj = json as Record<string, unknown>;
+      // Primary: data.vehicles (confirmed API shape)
+      const dataObj = obj['data'];
+      if (dataObj && typeof dataObj === 'object' && !Array.isArray(dataObj)) {
+        const nested = (dataObj as Record<string, unknown>)['vehicles'];
+        if (Array.isArray(nested)) vehicleList = nested;
+      }
+      // Fallbacks for alternative shapes
+      if (vehicleList.length === 0) {
+        const candidate = obj['vehicles'] ?? obj['content'];
+        if (Array.isArray(candidate)) vehicleList = candidate;
+      }
+      if (vehicleList.length === 0 && Array.isArray(obj['data'])) {
+        vehicleList = obj['data'] as unknown[];
+      }
+    }
+
+    let cached = 0;
+    for (const v of vehicleList) {
+      if (!v || typeof v !== 'object') continue;
+      const rec = v as Record<string, unknown>;
+      // The API returns assetId (confirmed by VSA QR feature and user).
+      // Index by both vin and registrationNo so vehicleIdentifier (whichever form it takes) resolves.
+      const assetId = String(rec['assetId'] ?? rec['vehicleAssetId'] ?? '').trim();
+      if (!assetId) continue;
+      const vin = String(rec['vin'] ?? '').trim();
+      const plate = String(rec['registrationNo'] ?? rec['licensePlate'] ?? '').trim();
+      if (vin)   { this._assetIdCache.set(vin, assetId);   cached++; }
+      if (plate && plate !== vin) { this._assetIdCache.set(plate, assetId); }
+    }
+    log('[DVIC] Vehicle asset ID cache populated:', cached, 'entries');
+  }
+
+  /**
+   * Resolves a vehicleIdentifier to its fleet vehicleAssetId (format: aaid_...).
+   *
+   * Primary path: cache lookup — populated during _refresh() via _fetchVehicleAssetIds().
+   * Fallback: single on-demand fetch from the fleet vehicles endpoint (for edge cases
+   *   where the vehicle is not yet in the pre-populated cache).
+   * Error path: if assetId cannot be resolved automatically, throws a descriptive error
+   *   so the caller can surface an inline message — no window.prompt is shown.
+   */
+  private async _resolveVehicleAssetId(vin: string): Promise<string> {
+    // 1. Cache hit (populated at refresh time — the happy path)
+    if (this._assetIdCache.has(vin)) return this._assetIdCache.get(vin)!;
+
+    // 2. Fallback: re-fetch all vehicles on-demand (e.g. cache miss due to new vehicle or
+    //    early submit before refresh completed).
+    log('[DVIC] Asset ID cache miss for', vin, '— fetching fleet vehicle list on-demand');
+    await this._fetchVehicleAssetIds();
+
+    if (this._assetIdCache.has(vin)) return this._assetIdCache.get(vin)!;
+
+    // 3. Not found — surface a descriptive error; never prompt the user.
+    throw new Error(
+      `Fahrzeug "${vin}" nicht im Fuhrpark gefunden. ` +
+      `Bitte prüfen Sie, ob das Fahrzeug den Status ACTIVE, MAINTENANCE oder PENDING hat.`,
+    );
+  }
+
+  private _promptReporterId(): string | null {
+    const val = window.prompt(
+      'Kein Reporter aus Pre-Trip DVIC gefunden.\n\nBitte geben Sie die Reporter-ID (Transporter-ID) manuell ein:',
+    );
+    return val ? val.trim() || null : null;
+  }
+
+  private async _submitPostTripDvic(vehicle: VehicleRecord): Promise<SubmitResult> {
+    const vin = vehicle.vehicleIdentifier;
+    try {
+      let reporterId: string | null = vehicle.reporterIds[0] ?? null;
+      if (!reporterId) {
+        reporterId = this._promptReporterId();
+        if (!reporterId) return { vehicleIdentifier: vin, success: false, error: 'Reporter-ID nicht angegeben' };
+      }
+
+      const serviceAreaId = this.companyConfig.getDefaultServiceAreaId();
+      log('[DVIC Submit] Starte für', vin, '| Reporter:', reporterId, '| SA:', serviceAreaId);
+
+      log('[DVIC Submit] Schritt 1: Ermittle Vehicle Asset ID…');
+      const vehicleAssetId = await this._resolveVehicleAssetId(vin);
+      log('[DVIC Submit] Vehicle Asset ID:', vehicleAssetId);
+
+      log('[DVIC Submit] Schritt 2: Erstelle Dummy-PNG…');
+      const file = await this._createDummyPNG();
+
+      log('[DVIC Submit] Schritt 3: Hole Upload-Template…');
+      const template = await this._getUploadTemplate();
+      log('[DVIC Submit] Template erhalten, action:', template.action);
+
+      log('[DVIC Submit] Schritt 4: Lade Datei hoch…');
+      const documentId = await this._uploadDummyFile(template, file);
+      log('[DVIC Submit] Document ID:', documentId);
+
+      log('[DVIC Submit] Schritt 5: Setze Dokument-Metadaten…');
+      const docInstanceId = await this._setDocumentMetadata(vehicleAssetId, documentId, template.token);
+      log('[DVIC Submit] Doc Instance ID:', docInstanceId);
+
+      log('[DVIC Submit] Schritt 6: Reiche Inspektion ein…');
+      const inspectionStartTime = Date.now();
+      const payload: InspectionPayload = {
+        inspectionStartTime,
+        inspectionType: 'POST_TRIP_DVIC',
+        VIN: vin,
+        defectsFound: [],
+        paperInspectionDocId: docInstanceId,
+        reporterId,
+        serviceAreaId,
+      };
+      await this._submitInspection(payload);
+      log('[DVIC Submit] Erfolgreich eingereicht für', vin);
+
+      return { vehicleIdentifier: vin, success: true };
+    } catch (e) {
+      err('[DVIC Submit] Fehler für', vin, ':', e);
+      return { vehicleIdentifier: vin, success: false, error: (e as Error).message };
+    }
+  }
+
+  private async _handleSingleSubmit(vehicle: VehicleRecord, buttonEl: HTMLButtonElement): Promise<void> {
+    const vin = vehicle.vehicleIdentifier;
+    const reporterId = vehicle.reporterIds[0] ?? '(unbekannt)';
+    const confirmed = vehicle.reporterIds.length > 0
+      ? confirm(`Post-Trip DVIC für Fahrzeug ${vin} einreichen?\n\nDie Reporter-ID "${reporterId}" wird vom Pre-Trip DVIC übernommen.`)
+      : confirm(`Post-Trip DVIC für Fahrzeug ${vin} einreichen?\n\nKein Reporter aus Pre-Trip DVIC gefunden. Sie werden nach der Reporter-ID gefragt.`);
+    if (!confirmed) return;
+
+    this._submitting = true;
+    buttonEl.textContent = '⏳';
+    buttonEl.classList.add('ct-dvic-submit-btn--loading');
+    buttonEl.disabled = true;
+
+    const result = await this._submitPostTripDvic(vehicle);
+
+    if (result.success) {
+      buttonEl.textContent = '✅';
+      buttonEl.classList.remove('ct-dvic-submit-btn--loading');
+      buttonEl.classList.add('ct-dvic-submit-btn--success');
+      setTimeout(() => {
+        this._submitting = false;
+        this._refresh();
+      }, 1500);
+    } else {
+      buttonEl.textContent = '❌';
+      buttonEl.classList.remove('ct-dvic-submit-btn--loading');
+      buttonEl.classList.add('ct-dvic-submit-btn--error');
+      buttonEl.title = result.error ?? 'Unbekannter Fehler';
+      this._submitting = false;
+    }
+  }
+
+  private async _handleBulkSubmit(): Promise<void> {
+    const missing = this._vehicles.filter((v) => v.status !== 'OK');
+    const count = missing.length;
+    if (count === 0) return;
+
+    const confirmed = confirm(
+      `Post-Trip DVIC für ${count} Fahrzeuge einreichen?\n\nFür jedes Fahrzeug wird die Reporter-ID vom jeweiligen Pre-Trip DVIC übernommen.\nFahrzeuge ohne Reporter-ID werden übersprungen.`,
+    );
+    if (!confirmed) return;
+
+    this._submitting = true;
+    const bulkBtn = document.getElementById('ct-dvic-bulk-submit') as HTMLButtonElement | null;
+    if (bulkBtn) { bulkBtn.disabled = true; bulkBtn.textContent = '⏳ Läuft…'; }
+
+    const results: SubmitResult[] = [];
+    for (const vehicle of missing) {
+      if (!vehicle.reporterIds[0]) {
+        results.push({ vehicleIdentifier: vehicle.vehicleIdentifier, success: false, error: 'Kein Reporter-ID' });
+        continue;
+      }
+      const result = await this._submitPostTripDvic(vehicle);
+      results.push(result);
+    }
+
+    const succeeded = results.filter((r) => r.success).length;
+    const failed = results.filter((r) => !r.success);
+    const failLines = failed.map((r) => `• ${r.vehicleIdentifier}: ${r.error ?? 'Fehler'}`).join('\n');
+    const summary = `Ergebnis: ${succeeded} erfolgreich, ${failed.length} fehlgeschlagen.`
+      + (failLines ? `\n\nFehler:\n${failLines}` : '');
+    alert(summary);
+
+    this._submitting = false;
+    this._refresh();
   }
 
   private _renderVsaTab(): void {
