@@ -51,6 +51,8 @@ export interface WhdRow {
   plannedOutboundStemTime: unknown;
   actualOutboundStemTime: unknown;
   lastDriverEventTime: number | null;
+  sessionEndTime: number | null;
+  lastStopExecutionTime: number | null;
   [key: string]: unknown;
 }
 
@@ -70,6 +72,8 @@ export function whdExtractRow(item: Record<string, unknown>): WhdRow {
     plannedOutboundStemTime: tta['plannedOutboundStemTime'] ?? null,
     actualOutboundStemTime:  tta['actualOutboundStemTime'] ?? null,
     lastDriverEventTime:     whdNormalizeEpochMs(item['lastDriverEventTime']),
+    sessionEndTime:          whdNormalizeEpochMs(item['sessionEndTime']),
+    lastStopExecutionTime:   whdNormalizeEpochMs(item['lastStopExecutionTime']),
   };
 }
 
@@ -98,6 +102,8 @@ const WHD_COLUMNS = [
   { key: 'plannedOutboundStemTime',label: 'Planned OB Stem',   type: 'duration' },
   { key: 'actualOutboundStemTime', label: 'Actual OB Stem',    type: 'duration' },
   { key: 'lastDriverEventTime',    label: 'Last Driver Event', type: 'time'     },
+  { key: 'sessionEndTime',         label: 'Logout',            type: 'time'     },
+  { key: 'lastStopExecutionTime',  label: 'Last Stop',         type: 'time'     },
 ] as const;
 
 const WHD_DETAIL_FIELDS = [
@@ -113,6 +119,8 @@ const WHD_DETAIL_FIELDS = [
   { key: 'plannedOutboundStemTime',label: 'Planned OB Stem',   format: 'duration', suffix: ''    },
   { key: 'actualOutboundStemTime', label: 'Actual OB Stem',    format: 'duration', suffix: ''    },
   { key: 'lastDriverEventTime',    label: 'Last Driver Event', format: 'time',     suffix: ''    },
+  { key: 'sessionEndTime',         label: 'Logout',            format: 'time',     suffix: ''    },
+  { key: 'lastStopExecutionTime',  label: 'Last Stop',         format: 'time',     suffix: ''    },
 ] as const;
 
 // ── Dashboard class ────────────────────────────────────────────────────────────
