@@ -34,7 +34,7 @@ export const DEFAULTS: AppConfig = {
     deliveryPerf: true,
     dvicCheck: true,
     dvicShowTransporters: true,
-    dvicAutoSubmit: true,
+    dvicAutoSubmit: false,
     workingHours: true,
     returnsDashboard: true,
     scorecard: true,
