@@ -290,7 +290,7 @@ export class ScorecardDashboard {
           <select id="ct-sc-week" class="ct-input" style="min-width:160px">${weekOptionsHtml}</select>
           <label for="ct-sc-sa">Service Area:</label>
           <select id="ct-sc-sa" class="ct-input"><option value="">Wird geladen…</option></select>
-          <button class="ct-btn ct-btn--accent" id="ct-sc-go">🔍 Fetch</button>
+          <button class="ct-btn ct-btn--accent" id="ct-sc-go">🔍 Laden</button>
           <button class="ct-btn ct-btn--primary" id="ct-sc-export">📋 CSV Export</button>
           <button class="ct-btn ct-btn--secondary" id="ct-sc-imgdl">🖼 Download Image</button>
           <button class="ct-btn ct-btn--close" id="ct-sc-close">✕ Close</button>

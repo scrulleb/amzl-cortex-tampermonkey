@@ -215,7 +215,7 @@ export class DeliveryPerformance {
           <select id="ct-dp-sa" class="ct-input" aria-label="Service Area">
             <option value="">Wird geladen…</option>
           </select>
-          <button class="ct-btn ct-btn--accent" id="ct-dp-go">🔍 Fetch</button>
+          <button class="ct-btn ct-btn--accent" id="ct-dp-go">🔍 Laden</button>
           <button class="ct-btn ct-btn--close" id="ct-dp-close" aria-label="Close">✕ Close</button>
         </div>
         <div id="ct-dp-status" class="ct-status" role="status" aria-live="polite"></div>

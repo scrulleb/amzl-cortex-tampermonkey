@@ -5,6 +5,7 @@ import { onDispose } from '../core/utils';
 import { API_URL, DAYS } from '../core/utils';
 import type { AppConfig } from '../core/storage';
 import type { CompanyConfig } from '../core/api';
+import { scCurrentWeek, scGenerateWeekOptions } from './scorecard';
 
 interface DayEntry {
   scheduledDay: number;
@@ -35,6 +36,12 @@ export class WhcDashboard {
   init(): void {
     if (this._overlayEl) return;
 
+    const curWeek = scCurrentWeek();
+    const weekOptions = scGenerateWeekOptions();
+    const weekOptionsHtml = weekOptions
+      .map((o) => `<option value="${esc(o.value)}"${o.value === curWeek ? ' selected' : ''}>${esc(o.label)}</option>`)
+      .join('');
+
     const overlay = document.createElement('div');
     overlay.id = 'ct-whc-overlay';
     overlay.className = 'ct-overlay';
@@ -42,8 +49,10 @@ export class WhcDashboard {
       <div class="ct-panel">
         <h2>📊 DA WHC-Dashboard</h2>
         <div class="ct-controls">
-          <label>Datum:</label>
+          <label id="ct-whc-date-label">Datum:</label>
           <input type="date" id="ct-whc-date" class="ct-input" value="${todayStr()}">
+          <label id="ct-whc-week-label" style="display:none">Woche:</label>
+          <select id="ct-whc-week" class="ct-input" style="display:none;min-width:160px">${weekOptionsHtml}</select>
           <label for="ct-whc-sa">Service Area:</label>
           <select id="ct-whc-sa" class="ct-select" aria-label="Service Area">
             <option value="">Wird geladen…</option>
@@ -52,7 +61,7 @@ export class WhcDashboard {
             <option value="day">Einzelner Tag</option>
             <option value="week">Ganze Woche (Mo–So)</option>
           </select>
-          <button class="ct-btn ct-btn--accent" id="ct-whc-go">🔍 Abfragen</button>
+          <button class="ct-btn ct-btn--accent" id="ct-whc-go">🔍 Laden</button>
           <button class="ct-btn ct-btn--primary" id="ct-whc-export">📋 CSV Export</button>
           <button class="ct-btn ct-btn--close" id="ct-whc-close">✕ Schließen</button>
         </div>
@@ -67,6 +76,8 @@ export class WhcDashboard {
     document.getElementById('ct-whc-close')!.addEventListener('click', () => this.hide());
     document.getElementById('ct-whc-go')!.addEventListener('click', () => this._runQuery());
     document.getElementById('ct-whc-export')!.addEventListener('click', () => this._exportCSV());
+
+    document.getElementById('ct-whc-mode')!.addEventListener('change', () => this._onModeChange());
 
     this.companyConfig.load().then(() => {
       this.companyConfig.populateSaSelect(
@@ -110,6 +121,19 @@ export class WhcDashboard {
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
+  private _onModeChange(): void {
+    const mode = (document.getElementById('ct-whc-mode') as HTMLSelectElement).value;
+    const isWeek = mode === 'week';
+    const dateInput = document.getElementById('ct-whc-date') as HTMLElement;
+    const dateLabel = document.getElementById('ct-whc-date-label') as HTMLElement;
+    const weekSelect = document.getElementById('ct-whc-week') as HTMLElement;
+    const weekLabel = document.getElementById('ct-whc-week-label') as HTMLElement;
+    dateInput.style.display = isWeek ? 'none' : '';
+    dateLabel.style.display = isWeek ? 'none' : '';
+    weekSelect.style.display = isWeek ? '' : 'none';
+    weekLabel.style.display = isWeek ? '' : 'none';
+  }
+
   private _resolveName(id: string): string {
     return this._nameMap[id] || id;
   }
@@ -128,17 +152,30 @@ export class WhcDashboard {
     return 'ct-ok';
   }
 
+  /** Convert ISO week string "YYYY-Www" to the Monday date "YYYY-MM-DD" */
+  private _mondayFromIsoWeek(isoWeek: string): string {
+    const [yearStr, wStr] = isoWeek.split('-W');
+    const year = parseInt(yearStr, 10);
+    const week = parseInt(wStr, 10);
+    // Jan 4 is always in week 1 (ISO 8601)
+    const jan4 = new Date(Date.UTC(year, 0, 4));
+    const dayOfWeek = jan4.getUTCDay() || 7; // Mon=1..Sun=7
+    const monday = new Date(jan4);
+    monday.setUTCDate(jan4.getUTCDate() - (dayOfWeek - 1) + (week - 1) * 7);
+    return monday.toISOString().split('T')[0];
+  }
+
   private _getMonday(dateStr: string): string {
-    const d = new Date(dateStr + 'T00:00:00');
-    const day = d.getDay();
-    const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-    d.setDate(diff);
+    const d = new Date(dateStr + 'T00:00:00Z');
+    const day = d.getUTCDay();
+    const diff = d.getUTCDate() - day + (day === 0 ? -6 : 1);
+    d.setUTCDate(diff);
     return d.toISOString().split('T')[0];
   }
 
   private _addDays(dateStr: string, n: number): string {
-    const d = new Date(dateStr + 'T00:00:00');
-    d.setDate(d.getDate() + n);
+    const d = new Date(dateStr + 'T00:00:00Z');
+    d.setUTCDate(d.getUTCDate() + n);
     return d.toISOString().split('T')[0];
   }
 
@@ -326,12 +363,20 @@ export class WhcDashboard {
   // ── Query ──────────────────────────────────────────────────────────────────
 
   private async _runQuery(): Promise<void> {
-    const date = (document.getElementById('ct-whc-date') as HTMLInputElement).value;
     const mode = (document.getElementById('ct-whc-mode') as HTMLSelectElement).value;
     const statusEl = document.getElementById('ct-whc-status')!;
     const resultEl = document.getElementById('ct-whc-result')!;
 
-    if (!date) { statusEl.textContent = '⚠️ Bitte Datum auswählen!'; return; }
+    let date: string;
+    if (mode === 'week') {
+      const isoWeek = (document.getElementById('ct-whc-week') as HTMLSelectElement).value;
+      if (!isoWeek) { statusEl.textContent = '⚠️ Bitte Woche auswählen!'; return; }
+      // Derive the Monday date from the ISO week string (e.g. "2026-W12")
+      date = this._mondayFromIsoWeek(isoWeek);
+    } else {
+      date = (document.getElementById('ct-whc-date') as HTMLInputElement).value;
+      if (!date) { statusEl.textContent = '⚠️ Bitte Datum auswählen!'; return; }
+    }
 
     resultEl.innerHTML = '';
     this._lastQueryMode = mode;
